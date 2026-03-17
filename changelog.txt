@@ -1,0 +1,6 @@
+Version: 0.1.0
+Date: 2026-03-16
+  Features:
+    - Added the first playable version of the Factorial AI Advisor.
+    - Added rule-based analysis for progression, bottlenecks, patterns, risks, and anti-patterns.
+    - Added snapshot export and an optional localhost UDP bridge workflow.

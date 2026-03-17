@@ -1,0 +1,9 @@
+{
+  "name": "factorial",
+  "version": "0.1.0",
+  "title": "Factorial AI Advisor",
+  "author": "OpenAI Codex",
+  "factorio_version": "2.0",
+  "dependencies": ["base >= 2.0.0"],
+  "description": "Adds an in-game advisor that inspects your factory, flags bottlenecks, and suggests what to do next."
+}
