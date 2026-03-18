@@ -1,5 +1,9 @@
 # Development Notes
 
+## Git Commits
+
+After every code edit that restarts Factorio, make a git commit with a summary of the changes. This is mandatory for all code changes in this repository.
+
 ## Restarting Factorio on macOS
 
 Factorio runs as a Steam app. To restart it:
