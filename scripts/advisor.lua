@@ -139,11 +139,12 @@ local function trim_items(items, maximum)
 end
 
 local function safe_entity_count(force, name)
-  local ok, value = pcall(force.get_entity_count, force, name)
-  if ok then
+  local ok, value = pcall(function()
+    return force.get_entity_count(name)
+  end)
+  if ok and value ~= nil then
     return value
   end
-
   return 0
 end
 
