@@ -23,11 +23,89 @@ from typing import Any
 from bridge.client import DEFAULT_MODEL, ask_claude
 from bridge.response import make_error_response, parse_response
 
-# Maximum UDP datagram we'll accept (1 MiB — same as the example bridge).
-MAX_DATAGRAM = 1024 * 1024
+# Maximum UDP datagram we'll accept (64 KiB).
+MAX_DATAGRAM = 65535
 
 # Default log directory (relative to tools/)
 DEFAULT_LOG_DIR = Path("logs")
+
+# How long to wait for remaining chunks before giving up (seconds).
+CHUNK_REASSEMBLY_TIMEOUT = 5.0
+
+
+class ChunkAssembler:
+    """Reassembles chunked UDP messages from Factorio.
+
+    Protocol:
+    - Small messages (<= 7KB) arrive as plain JSON — no chunking.
+    - Large messages are split into chunks, each a JSON object:
+      {"_chunked": true, "_msg_id": "...", "_part": N, "_total": N, "_data": "..."}
+    - The ``_data`` field contains a fragment of the original JSON string.
+    - Chunks may arrive out of order. Once all parts are received,
+      the fragments are concatenated and parsed as the full payload.
+    """
+
+    def __init__(self) -> None:
+        self._pending: dict[str, dict[str, Any]] = {}
+        # { msg_id: { "parts": {part_num: data_str}, "total": int, "first_seen": float, "address": tuple } }
+
+    def receive(self, raw_json: dict[str, Any], address: tuple) -> dict[str, Any] | None:
+        """Process a received JSON object.
+
+        Returns the fully reassembled payload dict if the message is
+        complete, or None if we're still waiting for more chunks.
+        """
+        if not raw_json.get("_chunked"):
+            # Not a chunked message — return as-is.
+            return raw_json
+
+        msg_id = raw_json["_msg_id"]
+        part = raw_json["_part"]
+        total = raw_json["_total"]
+        data = raw_json["_data"]
+
+        if msg_id not in self._pending:
+            self._pending[msg_id] = {
+                "parts": {},
+                "total": total,
+                "first_seen": time.monotonic(),
+                "address": address,
+            }
+
+        self._pending[msg_id]["parts"][part] = data
+
+        received = len(self._pending[msg_id]["parts"])
+        print(f"  Chunk {part}/{total} for message {msg_id} ({received}/{total} received)")
+
+        if received >= total:
+            # All chunks received — reassemble.
+            entry = self._pending.pop(msg_id)
+            fragments = [entry["parts"][i] for i in sorted(entry["parts"])]
+            full_json_str = "".join(fragments)
+            try:
+                return json.loads(full_json_str)
+            except json.JSONDecodeError as exc:
+                print(f"  ERROR: Failed to parse reassembled message: {exc}", file=sys.stderr)
+                return None
+
+        return None
+
+    def expire_stale(self) -> None:
+        """Remove any pending messages that have timed out."""
+        now = time.monotonic()
+        expired = [
+            msg_id
+            for msg_id, entry in self._pending.items()
+            if now - entry["first_seen"] > CHUNK_REASSEMBLY_TIMEOUT
+        ]
+        for msg_id in expired:
+            entry = self._pending.pop(msg_id)
+            received = len(entry["parts"])
+            total = entry["total"]
+            print(
+                f"  WARNING: Message {msg_id} timed out ({received}/{total} chunks received)",
+                file=sys.stderr,
+            )
 
 
 def _generate_log_prefix() -> str:
@@ -124,30 +202,42 @@ def serve(
     print(f"Factorial AI Advisor bridge listening on udp://127.0.0.1:{port}")
     print(f"  Model: {model}")
     print(f"  Prompt mode: {prompt_mode}")
+    print(f"  Chunked message reassembly: enabled (timeout {CHUNK_REASSEMBLY_TIMEOUT}s)")
     if log_dir:
         print(f"  Logging to: {log_dir.resolve()}")
     else:
         print("  Logging: disabled")
     print()
 
+    assembler = ChunkAssembler()
+
     while True:
         data, address = sock.recvfrom(MAX_DATAGRAM)
-        addr_str = f"{address[0]}:{address[1]}"
-        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] Request from {addr_str}")
 
         # Parse incoming JSON.
         try:
-            payload = json.loads(data.decode("utf-8"))
+            raw_json = json.loads(data.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            print(f"  Bad payload: {exc}", file=sys.stderr)
+            print(f"  Bad payload from {address}: {exc}", file=sys.stderr)
             response = make_error_response(f"Could not decode request: {exc}")
             sock.sendto(json.dumps(response).encode("utf-8"), address)
             continue
 
-        if not isinstance(payload, dict):
+        if not isinstance(raw_json, dict):
             response = make_error_response("Request payload is not a JSON object.")
             sock.sendto(json.dumps(response).encode("utf-8"), address)
             continue
+
+        # Handle chunked reassembly.
+        payload = assembler.receive(raw_json, address)
+        assembler.expire_stale()
+
+        if payload is None:
+            # Still waiting for more chunks.
+            continue
+
+        addr_str = f"{address[0]}:{address[1]}"
+        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] Complete request from {addr_str}")
 
         start = time.monotonic()
         response = handle_request(

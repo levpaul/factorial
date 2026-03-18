@@ -327,8 +327,8 @@ local function collect_rates(force, surface, sparse)
   local item_totals = {}
 
   for _, item in ipairs(TRACKED_ITEMS) do
-    local prod = one_minute_flow(item_stats, item, "input")
-    local cons = one_minute_flow(item_stats, item, "output")
+    local prod = round(one_minute_flow(item_stats, item, "input"))
+    local cons = round(one_minute_flow(item_stats, item, "output"))
     local total_prod = total_flow(item_stats, item, "input")
     local total_cons = total_flow(item_stats, item, "output")
 
@@ -342,8 +342,8 @@ local function collect_rates(force, surface, sparse)
   end
 
   for _, fluid in ipairs(TRACKED_FLUIDS) do
-    local prod = one_minute_flow(fluid_stats, fluid, "input")
-    local cons = one_minute_flow(fluid_stats, fluid, "output")
+    local prod = round(one_minute_flow(fluid_stats, fluid, "input"))
+    local cons = round(one_minute_flow(fluid_stats, fluid, "output"))
 
     -- In sparse mode, only include fluids with activity
     if not sparse or prod > 0 or cons > 0 then
