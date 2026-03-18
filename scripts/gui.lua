@@ -97,7 +97,7 @@ local function build_text_content(report, external_report, show_internal)
   return table.concat(lines, "\n")
 end
 
-local function add_section(parent, title, items, dev_mode)
+local function add_section(parent, title, items)
   -- Section header flow with icon
   local header_flow = parent.add({
     type = "flow",
@@ -126,7 +126,12 @@ local function add_section(parent, title, items, dev_mode)
   for _, item in ipairs(items) do
     local severity, body = parse_severity(item)
     local caption = severity_richtext(severity, body)
-    add_text_element(parent, "  - " .. caption, dev_mode)
+    local label = parent.add({
+      type = "label",
+      caption = "  - " .. caption
+    })
+    label.style.single_line = false
+    label.style.maximal_width = CONTENT_WIDTH
   end
 end
 
@@ -394,7 +399,7 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
             direction = "horizontal"
           }).style.top_margin = 4
         end
-        add_section(body, section.title, section.items, false)
+        add_section(body, section.title, section.items)
       end
     end
 
@@ -415,7 +420,7 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
 
       for _, section in ipairs(external_report.sections) do
         local items = section.items or { section.text or "No details provided." }
-        add_section(body, section.title or "External Notes", items, false)
+        add_section(body, section.title or "External Notes", items)
       end
     end
   end
