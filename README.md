@@ -1,103 +1,144 @@
 # Factorial AI Advisor
 
-This repository now contains a playable starter Factorio 2.0 mod that adds an in-game advisor. The advisor reads a slice of the current game state, applies a rule-based analysis, and surfaces five kinds of guidance:
+A Factorio 2.0 mod that provides intelligent gameplay advice based on real-time analysis of your factory.
 
-1. What to focus on next to reach a rocket launch.
-2. Which resource bottleneck is most likely holding the base back.
-3. New layout and control patterns worth applying.
-4. Upcoming issues such as ore depletion, oil pressure, brownouts, or biter risk.
-5. Serious anti-patterns that make the base feel overly manual or fragile.
+## What It Does
 
-## What the mod does today
+The advisor reads your game state and surfaces five kinds of guidance:
 
-- Adds a hotkey: `Control + Shift + A`
-- Adds chat commands:
-  - `/advisor`
-  - `/advisor-refresh`
-  - `/advisor-export`
-  - `/advisor-send`
-- Builds a runtime snapshot from:
-  - researched technologies
-  - entity counts for core factory structures
-  - one-minute production and consumption rates
-  - current-surface resource totals
-  - pollution and enemy evolution
-- Renders the advice in a simple in-game GUI
-- Exports snapshots and local reports to `script-output/factorial/player-<n>/...`
-- Optionally sends snapshot JSON to a localhost UDP bridge
+1. **Focus Priorities** - What to work on next based on your progression stage
+2. **Resource Bottlenecks** - Identifies your biggest production constraints (iron, copper, steel, oil, power)
+3. **Pattern Recommendations** - Suggests better factory designs and layout improvements
+4. **Predictive Warnings** - Alerts you to upcoming issues (ore depletion, biter pressure, brownouts)
+5. **Anti-Pattern Detection** - Flags inefficient setups you should improve
 
-## Why the architecture is split
+The mod tracks:
+- Researched technologies
+- Entity counts (assemblers, furnaces, drills, labs, etc.)
+- One-minute production/consumption rates
+- Surface resource totals
+- Pollution and enemy evolution
 
-The mod itself is best at deterministic inspection:
+## Architecture
 
-- What entities exist
-- What tech is researched
-- Which resources are flowing
-- How much pollution and evolution are building
+The mod has two layers:
 
-That makes a rule engine a strong first layer. It is fast, always available, and gives trustworthy, inspectable advice even with no external service.
+**Internal Advisor (Rule-Based)**
+- Fast, always available, no external dependency
+- Deterministic analysis of factory state
+- Trustworthy advice based on game signals
 
-For the richer "AI companion" layer, the best pattern is:
+**External Advisor (AI/Model-Based)**
+- Sends snapshot JSON to a localhost UDP bridge
+- External process can invoke any AI/LLM
+- Response displayed alongside internal advice
 
-1. The mod exports a compact structured snapshot.
-2. A local bridge process turns that snapshot into a prompt.
-3. A model returns a higher-level narrative or strategy review.
-4. The bridge sends the response back to the mod over localhost UDP.
+## Installation
 
-That keeps the game-facing code simple and deterministic while still letting you swap in a better agent later.
-
-## Files
-
-- [control.lua](/Users/levilovelock/repos/factorial/control.lua)
-- [scripts/advisor.lua](/Users/levilovelock/repos/factorial/scripts/advisor.lua)
-- [scripts/external.lua](/Users/levilovelock/repos/factorial/scripts/external.lua)
-- [scripts/gui.lua](/Users/levilovelock/repos/factorial/scripts/gui.lua)
-- [docs/architecture.md](/Users/levilovelock/repos/factorial/docs/architecture.md)
-- [tools/udp_bridge_example.py](/Users/levilovelock/repos/factorial/tools/udp_bridge_example.py)
+1. Clone or download this repository
+2. Copy/symlink to your Factorio mods directory as `factorial`:
+   - **Windows**: `%appdata%\Factorio\mods\`
+   - **macOS**: `~/Library/Application Support/factorio/mods/`
+   - **Linux**: `~/.factorio/mods/`
+3. Enable the mod in Factorio
 
 ## Usage
 
-Copy or symlink this repository into your Factorio mods folder so the folder name stays `factorial`, then launch the game and open a save.
+### Opening the Advisor
 
-Open the advisor with:
+- Press **Control+Shift+A** (or **Shift+F**)
+- Or use console command: `/advisor`
 
-```text
-Control + Shift + A
+### Buttons
+
+| Button | Action |
+|--------|--------|
+| Refresh | Re-analyze factory and update recommendations |
+| Export | Save snapshot and report JSON to `script-output/factorial/` |
+| Ask External | Send factory data to external UDP bridge for AI analysis |
+| Show Internal | Toggle internal advisor recommendations (hidden by default) |
+| Clear | Clear all displayed information |
+
+### Console Commands
+
+| Command | Description |
+|---------|-------------|
+| `/advisor` | Toggle advisor window |
+| `/advisor-refresh` | Refresh analysis |
+| `/advisor-export` | Export snapshot to script-output |
+| `/advisor-send` | Send snapshot to UDP bridge |
+
+### Mod Settings
+
+Settings → Mod Settings → Global:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Enable UDP Bridge | false | Enable sending data to external AI |
+| UDP Send Port | 34198 | Port for sending UDP data |
+| UDP Receive Port | 34199 | Port for receiving UDP responses |
+| Auto-Poll UDP | true | Automatically check for responses |
+| Dev Mode | false | Enable selectable/copyable text in advisor window |
+
+## External AI Integration
+
+To use an external AI advisor:
+
+1. Enable "Enable UDP Bridge" in mod settings
+2. Start Factorio with UDP enabled:
+   ```
+   factorio --enable-lua-udp=34199
+   ```
+3. Run your UDP bridge server (default port 34198)
+4. Click "Ask External" or use `/advisor-send`
+
+Example bridge: `python3 tools/udp_bridge_example.py --port 34198`
+
+### Snapshot Payload
+
+The JSON payload includes:
+- Factory metadata (tick, surface, player info)
+- Entity counts (assemblers, furnaces, drills, etc.)
+- Production rates (items, fluids per minute)
+- Resource totals per surface
+- Technology progression
+- Environmental data (pollution, evolution)
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `control.lua` | Event handlers and commands |
+| `data.lua` | Custom input definitions |
+| `settings.lua` | Mod settings configuration |
+| `scripts/advisor.lua` | Internal advisor logic |
+| `scripts/external.lua` | UDP bridge integration |
+| `scripts/gui.lua` | UI rendering |
+| `locale/en/locale.cfg` | English translations |
+| `tools/udp_bridge_example.py` | Example UDP bridge server |
+| `docs/architecture.md` | Detailed architecture docs |
+
+## Development
+
+### Restarting Factorio (macOS)
+
+```bash
+kill -9 $(pgrep -x factorio); sleep 2; open -a Factorio
 ```
 
-Or:
+Note: The process name is `factorio` (lowercase), but the app name for `open` is `Factorio` (capitalized).
 
-```text
-/advisor
-```
+## Accuracy Notes
 
-To export a request payload:
+The advisor uses heuristic signals that are cheap to read:
+- Entity counts
+- Tech gates
+- Resource totals
+- Rate deltas
+- Environmental pressure
 
-```text
-/advisor-export
-```
+It doesn't inspect belt layouts, inserter wiring, or local geometry. This makes it a reliable base layer for deterministic advice while leaving strategic analysis to optional external AI.
 
-To test the optional localhost bridge:
+## License
 
-1. Start Factorio with `--enable-lua-udp=<receive-port>` where `<receive-port>` is
-   the port Factorio will use for its own UDP socket. This **must differ** from the
-   bridge port. The default bridge port is `34198`, so `--enable-lua-udp=34199` works
-   out of the box. In `settings.ini` this becomes `enable-lua-udp=34199`.
-2. Turn on the runtime setting `factorial-enable-udp-bridge`
-3. Optionally adjust the mod settings (Settings → Mod Settings → Map):
-   - **Factorial: Bridge UDP port** — the port the bridge listens on (default `34198`)
-   - **Factorial: Receive UDP port** — must match the value in `--enable-lua-udp` (default `34199`)
-4. Run the example bridge: `python3 tools/udp_bridge_example.py --port 34198`
-5. Use `/advisor-send` or the `Ask External` button
-
-## Notes on accuracy
-
-The current advisor is intentionally heuristic-heavy. It does not inspect exact belt layouts, inserter wiring, or local defensive geometry yet. Instead it works from robust signals that are cheap to read every time:
-
-- counts
-- tech gates
-- resource totals
-- rate deltas
-- environmental pressure
-
-That makes it a good base layer, and a good source payload for a later model-based reviewer.
+MIT License
