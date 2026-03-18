@@ -155,6 +155,32 @@ function gui.set_internal_button_state(player, showing)
   end
 end
 
+function gui.set_clear_button_visible(player, visible)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return
+  end
+  local button_bar = frame[gui.names.button_bar]
+  if not button_bar then
+    return
+  end
+  local button = button_bar[gui.names.clear_button]
+  if button and button.valid then
+    button.visible = visible
+  end
+end
+
+function gui.has_content(report, external_report)
+  -- Check if there's any meaningful content to display
+  if report and report.sections and #report.sections > 0 then
+    return true
+  end
+  if external_report and external_report.sections and #external_report.sections > 0 then
+    return true
+  end
+  return false
+end
+
 function gui.open(player)
   if gui.is_open(player) then
     return false
@@ -267,11 +293,12 @@ function gui.open(player)
     name = gui.names.internal_button,
     caption = "Show Internal"
   })
-  button_bar.add({
+  local clear_button = button_bar.add({
     type = "button",
     name = gui.names.clear_button,
     caption = "Clear"
   })
+  clear_button.visible = false  -- Hidden by default, shown when there's content
 
   player.opened = frame
   return true
@@ -304,6 +331,9 @@ function gui.clear(player)
   if status_flow then
     destroy_children(status_flow)
   end
+
+  -- Hide Clear button after clearing content
+  gui.set_clear_button_visible(player, false)
 end
 
 function gui.render(player, report, external_report, show_internal, dev_mode)
@@ -321,6 +351,9 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
   if not body then
     return
   end
+
+  -- Show/hide Clear button based on whether there's content
+  gui.set_clear_button_visible(player, gui.has_content(report, external_report))
 
   -- Populate status bar
   local status_flow = content[gui.names.status_flow]
