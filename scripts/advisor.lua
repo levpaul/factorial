@@ -157,13 +157,15 @@ local function one_minute_flow(statistics, name, category)
     return 0
   end
 
-  local ok, value = pcall(statistics.get_flow_count, statistics, {
-    name = name,
-    category = category,
-    precision_index = defines.flow_precision_index.one_minute
-  })
+  local ok, value = pcall(function()
+    return statistics.get_flow_count({
+      name = name,
+      category = category,
+      precision_index = defines.flow_precision_index.one_minute
+    })
+  end)
 
-  if ok then
+  if ok and value then
     return value
   end
 
@@ -175,13 +177,15 @@ local function total_flow(statistics, name, category)
     return 0
   end
 
-  local getter = statistics.get_input_count
-  if category == "output" then
-    getter = statistics.get_output_count
-  end
+  local ok, value = pcall(function()
+    if category == "output" then
+      return statistics.get_output_count(name)
+    else
+      return statistics.get_input_count(name)
+    end
+  end)
 
-  local ok, value = pcall(getter, statistics, name)
-  if ok then
+  if ok and value then
     return value
   end
 
@@ -314,7 +318,7 @@ local function build_metrics(snapshot)
   return metrics
 end
 
-local function collect_rates(force, surface)
+local function collect_rates(force, surface, sparse)
   local item_stats = force.get_item_production_statistics(surface)
   local fluid_stats = force.get_fluid_production_statistics(surface)
   local item_rates = {}
@@ -322,56 +326,207 @@ local function collect_rates(force, surface)
   local item_totals = {}
 
   for _, item in ipairs(TRACKED_ITEMS) do
-    item_rates[item] = {
-      production = one_minute_flow(item_stats, item, "input"),
-      consumption = one_minute_flow(item_stats, item, "output")
-    }
-    item_totals[item] = {
-      produced = total_flow(item_stats, item, "input"),
-      consumed = total_flow(item_stats, item, "output")
-    }
+    local prod = one_minute_flow(item_stats, item, "input")
+    local cons = one_minute_flow(item_stats, item, "output")
+    local total_prod = total_flow(item_stats, item, "input")
+    local total_cons = total_flow(item_stats, item, "output")
+
+    -- In sparse mode, only include items with activity
+    if not sparse or prod > 0 or cons > 0 then
+      item_rates[item] = { production = prod, consumption = cons }
+    end
+    if not sparse or total_prod > 0 or total_cons > 0 then
+      item_totals[item] = { produced = total_prod, consumed = total_cons }
+    end
   end
 
   for _, fluid in ipairs(TRACKED_FLUIDS) do
-    fluid_rates[fluid] = {
-      production = one_minute_flow(fluid_stats, fluid, "input"),
-      consumption = one_minute_flow(fluid_stats, fluid, "output")
-    }
+    local prod = one_minute_flow(fluid_stats, fluid, "input")
+    local cons = one_minute_flow(fluid_stats, fluid, "output")
+
+    -- In sparse mode, only include fluids with activity
+    if not sparse or prod > 0 or cons > 0 then
+      fluid_rates[fluid] = { production = prod, consumption = cons }
+    end
   end
 
   return item_rates, fluid_rates, item_totals
 end
 
+local function surface_has_entities(force, surface)
+  -- Check if the force has any significant entities on this surface
+  -- We use a quick heuristic: check for common early-game entities
+  local check_entities = {
+    "electric-mining-drill",
+    "burner-mining-drill",
+    "assembling-machine-1",
+    "assembling-machine-2",
+    "assembling-machine-3",
+    "lab",
+    "stone-furnace",
+    "steel-furnace",
+    "electric-furnace",
+    "roboport",
+    "rocket-silo"
+  }
+
+  for _, entity_name in ipairs(check_entities) do
+    local count = surface.count_entities_filtered({
+      force = force,
+      name = entity_name,
+      limit = 1
+    })
+    if count > 0 then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function collect_surface_data(force, surface)
+  -- Collect resources for this surface (sparse: only non-zero)
+  local resources = {}
+  local available_resources = surface.get_resource_counts()
+  for _, resource_name in ipairs(SURFACE_RESOURCES) do
+    local amount = available_resources[resource_name] or 0
+    if amount > 0 then
+      resources[resource_name] = amount
+    end
+  end
+
+  -- Collect rates for this surface (sparse mode: only non-zero)
+  local item_rates, fluid_rates, item_totals = collect_rates(force, surface, true)
+
+  -- Collect environment data for this surface
+  local enemy_force = game.forces.enemy
+  local environment = {
+    total_pollution = round(surface.get_total_pollution()),
+    enemy_evolution = enemy_force and enemy_force.get_evolution_factor(surface) or 0,
+    pollution_evolution = enemy_force and enemy_force.get_evolution_factor_by_pollution(surface) or 0
+  }
+
+  return {
+    resources = resources,
+    rates = {
+      items = item_rates,
+      fluids = fluid_rates
+    },
+    totals = {
+      items = item_totals
+    },
+    environment = environment
+  }
+end
+
+local function aggregate_rates(surfaces_data)
+  -- Sum up rates across all surfaces for backward compatibility
+  local agg_item_rates = {}
+  local agg_fluid_rates = {}
+  local agg_item_totals = {}
+
+  -- Initialize with zeros
+  for _, item in ipairs(TRACKED_ITEMS) do
+    agg_item_rates[item] = { production = 0, consumption = 0 }
+    agg_item_totals[item] = { produced = 0, consumed = 0 }
+  end
+  for _, fluid in ipairs(TRACKED_FLUIDS) do
+    agg_fluid_rates[fluid] = { production = 0, consumption = 0 }
+  end
+
+  -- Sum across all surfaces
+  for _, surface_data in pairs(surfaces_data) do
+    for _, item in ipairs(TRACKED_ITEMS) do
+      local rate = surface_data.rates.items[item]
+      if rate then
+        agg_item_rates[item].production = agg_item_rates[item].production + rate.production
+        agg_item_rates[item].consumption = agg_item_rates[item].consumption + rate.consumption
+      end
+      local total = surface_data.totals.items[item]
+      if total then
+        agg_item_totals[item].produced = agg_item_totals[item].produced + total.produced
+        agg_item_totals[item].consumed = agg_item_totals[item].consumed + total.consumed
+      end
+    end
+    for _, fluid in ipairs(TRACKED_FLUIDS) do
+      local rate = surface_data.rates.fluids[fluid]
+      if rate then
+        agg_fluid_rates[fluid].production = agg_fluid_rates[fluid].production + rate.production
+        agg_fluid_rates[fluid].consumption = agg_fluid_rates[fluid].consumption + rate.consumption
+      end
+    end
+  end
+
+  return agg_item_rates, agg_fluid_rates, agg_item_totals
+end
+
+local function aggregate_resources(surfaces_data)
+  -- Sum resources across all surfaces
+  local agg_resources = {}
+  for _, resource_name in ipairs(SURFACE_RESOURCES) do
+    agg_resources[resource_name] = 0
+  end
+
+  for _, surface_data in pairs(surfaces_data) do
+    for _, resource_name in ipairs(SURFACE_RESOURCES) do
+      agg_resources[resource_name] = agg_resources[resource_name] + (surface_data.resources[resource_name] or 0)
+    end
+  end
+
+  return agg_resources
+end
+
 local function collect_snapshot(player)
   local force = player.force
-  local surface = player.surface
+  local current_surface = player.surface
   local technologies = {}
   local entities = {}
-  local resources = {}
 
+  -- Collect technologies (force-wide)
   for _, technology in ipairs(TRACKED_TECHS) do
     technologies[technology] = tech_researched(force, technology)
   end
 
+  -- Collect entity counts (force-wide)
   for _, entity in ipairs(TRACKED_ENTITIES) do
     entities[entity] = safe_entity_count(force, entity)
   end
 
-  local available_resources = surface.get_resource_counts()
-  for _, resource_name in ipairs(SURFACE_RESOURCES) do
-    resources[resource_name] = available_resources[resource_name] or 0
+  -- Collect per-surface data for all surfaces with infrastructure
+  local surfaces_data = {}
+  local surface_names = {}
+
+  for _, surface in pairs(game.surfaces) do
+    if surface.valid and surface_has_entities(force, surface) then
+      surfaces_data[surface.name] = collect_surface_data(force, surface)
+      table.insert(surface_names, surface.name)
+    end
   end
 
-  local item_rates, fluid_rates, item_totals = collect_rates(force, surface)
+  -- If no surfaces have entities, at least include the current surface
+  if next(surfaces_data) == nil then
+    surfaces_data[current_surface.name] = collect_surface_data(force, current_surface)
+    table.insert(surface_names, current_surface.name)
+  end
+
+  -- Aggregate rates and resources across all surfaces (for backward compat with rule engine)
+  local agg_item_rates, agg_fluid_rates, agg_item_totals = aggregate_rates(surfaces_data)
+  local agg_resources = aggregate_resources(surfaces_data)
+
+  -- Use current surface's environment for the top-level (backward compat)
+  local current_surface_data = surfaces_data[current_surface.name] or collect_surface_data(force, current_surface)
+
   local snapshot = {
     meta = {
-      advisor_version = "0.1.0",
+      advisor_version = "0.2.0",
       game_version = helpers.game_version,
       tick = game.tick,
-      surface = surface.name,
+      surface = current_surface.name,
       player_index = player.index,
       player_name = player.name,
-      force = force.name
+      force = force.name,
+      surface_count = #surface_names,
+      surfaces_collected = surface_names
     },
     force = {
       rockets_launched = force.rockets_launched,
@@ -379,18 +534,19 @@ local function collect_snapshot(player)
     },
     technologies = technologies,
     entities = entities,
-    resources = resources,
-    environment = {
-      total_pollution = round(surface.get_total_pollution()),
-      enemy_evolution = game.forces.enemy.get_evolution_factor(surface),
-      pollution_evolution = game.forces.enemy.get_evolution_factor_by_pollution(surface)
-    },
+
+    -- Per-surface breakdown (NEW)
+    surfaces = surfaces_data,
+
+    -- Aggregated data (backward compatibility with rule engine)
+    resources = agg_resources,
+    environment = current_surface_data.environment,
     rates = {
-      items = item_rates,
-      fluids = fluid_rates
+      items = agg_item_rates,
+      fluids = agg_fluid_rates
     },
     totals = {
-      items = item_totals
+      items = agg_item_totals
     }
   }
 
@@ -741,11 +897,25 @@ function advisor.build_report(player)
     analyze_antipatterns(snapshot)
   }
 
+  local ticks = snapshot.meta.tick
+  local total_seconds = math.floor(ticks / 60)
+  local hours = math.floor(total_seconds / 3600)
+  local minutes = math.floor((total_seconds % 3600) / 60)
+
   local report = {
     summary = snapshot.stage.focus,
     stage = snapshot.stage,
-    generated_at_tick = snapshot.meta.tick,
-    sections = sections
+    generated_at_tick = ticks,
+    sections = sections,
+    stats = {
+      iron_rate = snapshot.rates.items["iron-plate"].production,
+      copper_rate = snapshot.rates.items["copper-plate"].production,
+      steel_rate = snapshot.rates.items["steel-plate"].production,
+      top_science = top_science_rate(snapshot),
+      evolution = snapshot.environment.enemy_evolution,
+      pollution = snapshot.environment.total_pollution,
+      game_time = ("%d:%02d"):format(hours, minutes)
+    }
   }
 
   return report, snapshot

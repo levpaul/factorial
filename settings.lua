@@ -16,10 +16,26 @@ data:extend({
     order = "b"
   },
   {
+    type = "int-setting",
+    name = "factorial-udp-receive-port",
+    setting_type = "runtime-global",
+    default_value = 34199,
+    minimum_value = 1024,
+    maximum_value = 65535,
+    order = "c"
+  },
+  {
     type = "bool-setting",
     name = "factorial-auto-poll-udp",
     setting_type = "runtime-global",
     default_value = true,
-    order = "c"
+    order = "d"
+  },
+  {
+    type = "bool-setting",
+    name = "factorial-dev-mode",
+    setting_type = "runtime-global",
+    default_value = false,
+    order = "e"
   }
 })

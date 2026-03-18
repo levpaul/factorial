@@ -2,10 +2,25 @@ local advisor = require("scripts.advisor")
 local external = require("scripts.external")
 local gui = require("scripts.gui")
 
+local function get_show_internal(player_index)
+  advisor.ensure_player(player_index)
+  return storage.player_data[player_index].show_internal == true
+end
+
+local function set_show_internal(player_index, value)
+  advisor.ensure_player(player_index)
+  storage.player_data[player_index].show_internal = value
+end
+
+local function get_dev_mode()
+  return settings.global["factorial-dev-mode"].value
+end
+
 local function refresh_player(player)
   local report, snapshot = advisor.build_report(player)
   advisor.store_player_state(player.index, report, snapshot)
-  gui.render(player, report, advisor.get_external_report(player.index))
+  gui.render(player, report, advisor.get_external_report(player.index), get_show_internal(player.index), get_dev_mode())
+  gui.set_internal_button_state(player, get_show_internal(player.index))
   return report, snapshot
 end
 
@@ -126,6 +141,17 @@ script.on_init(on_init)
 script.on_configuration_changed(on_configuration_changed)
 script.on_event(defines.events.on_player_created, on_player_created)
 
+script.on_event(defines.events.on_gui_closed, function(event)
+  local player = game.get_player(event.player_index)
+  if not player then
+    return
+  end
+
+  if event.element and event.element.valid and event.element.name == gui.names.frame then
+    gui.close(player)
+  end
+end)
+
 script.on_event("factorial-toggle-advisor", function(event)
   local player = game.get_player(event.player_index)
   if player then
@@ -163,6 +189,26 @@ script.on_event(defines.events.on_gui_click, function(event)
 
   if element.name == gui.names.external_button then
     send_external_request(player)
+    return
+  end
+
+  if element.name == gui.names.internal_button then
+    local current = get_show_internal(player.index)
+    set_show_internal(player.index, not current)
+    local report = advisor.get_last_report(player.index)
+    if report then
+      gui.render(player, report, advisor.get_external_report(player.index), not current, get_dev_mode())
+      gui.set_internal_button_state(player, not current)
+    end
+    return
+  end
+
+  if element.name == gui.names.clear_button then
+    advisor.store_player_state(player.index, nil, nil)
+    advisor.set_external_report(player.index, nil)
+    gui.clear(player)
+    player.print("[Factorial Advisor] Cleared.")
+    return
   end
 end)
 
@@ -172,12 +218,11 @@ end)
 
 script.on_event(defines.events.on_udp_packet_received, function(event)
   external.receive_response(event)
-
   local player = game.get_player(event.player_index)
   if player and gui.is_open(player) then
     local report = advisor.get_last_report(player.index)
     if report then
-      gui.render(player, report, advisor.get_external_report(player.index))
+      gui.render(player, report, advisor.get_external_report(player.index), get_show_internal(player.index), get_dev_mode())
     end
   end
 end)

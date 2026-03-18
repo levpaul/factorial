@@ -80,7 +80,9 @@ end
 
 function external.send_snapshot(player, snapshot, report)
   if not is_bridge_enabled() then
-    return false, "Enable the runtime setting 'factorial-enable-udp-bridge' and start Factorio with --enable-lua-udp first."
+    local receive_port = setting_value("factorial-udp-receive-port") or 34199
+    local bridge_port = setting_value("factorial-udp-port") or 34198
+    return false, ("Enable the runtime setting 'factorial-enable-udp-bridge' and start Factorio with --enable-lua-udp=%d. The bridge must listen on %d."):format(receive_port, bridge_port)
   end
 
   local port = setting_value("factorial-udp-port")
@@ -100,7 +102,13 @@ function external.send_snapshot(player, snapshot, report)
     local_report = report
   }
 
-  helpers.send_udp(port, helpers.table_to_json(payload), player.index)
+  local json_payload = helpers.table_to_json(payload)
+  local ok, err = pcall(helpers.send_udp, port, json_payload, player.index)
+  if not ok then
+    local receive_port = setting_value("factorial-udp-receive-port") or 34199
+    return false, ("send_udp failed: %s. Make sure Factorio was started with --enable-lua-udp=%d."):format(tostring(err), receive_port)
+  end
+
   return true
 end
 

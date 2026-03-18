@@ -1,0 +1,12 @@
+Hi I want to build a mod for the game 'factorio'. The idea is that the mod should enable a new 'AI Advisor' companion. This advisor would read the game state to understand what the player has built so far. It would offer advice to the player a few distinct options.
+
+1. What should they focus on next, in order to beat the game?
+2. What is the biggest bottle-neck in resources that needs to be addressed?
+3. What are some new patterns that can be applied to improve their base? (i.e. layout optimizations, control aspects)
+4. Predicting upcoming issues and resource bottlenecks that will need to be addressed. This can include vulnerabilities to environment or biters.
+5. Serious anti-patterns that exist in the base now - this could include manual feeling.
+
+I'm not sure how all of the above will best be addressed, maybe by a series of rules and actions - but I personally like the idea of being able to extract game data and provide summarizes to an agent model for the above analysis.
+
+
+

@@ -79,10 +79,16 @@ To export a request payload:
 
 To test the optional localhost bridge:
 
-1. Start Factorio with `--enable-lua-udp`
+1. Start Factorio with `--enable-lua-udp=<receive-port>` where `<receive-port>` is
+   the port Factorio will use for its own UDP socket. This **must differ** from the
+   bridge port. The default bridge port is `34198`, so `--enable-lua-udp=34199` works
+   out of the box. In `settings.ini` this becomes `enable-lua-udp=34199`.
 2. Turn on the runtime setting `factorial-enable-udp-bridge`
-3. Run the example bridge in this repo
-4. Use `/advisor-send` or the `Ask External` button
+3. Optionally adjust the mod settings (Settings → Mod Settings → Map):
+   - **Factorial: Bridge UDP port** — the port the bridge listens on (default `34198`)
+   - **Factorial: Receive UDP port** — must match the value in `--enable-lua-udp` (default `34199`)
+4. Run the example bridge: `python3 tools/udp_bridge_example.py --port 34198`
+5. Use `/advisor-send` or the `Ask External` button
 
 ## Notes on accuracy
 
