@@ -130,7 +130,30 @@ local function send_chunked_udp(port, json_payload, player_index)
   return true
 end
 
-function external.send_snapshot(player, snapshot, report)
+--- Build the common payload for external requests, with an optional backend override.
+local function build_payload(player, snapshot, report, backend)
+  local payload = {
+    kind = "factorial-advisor-request",
+    source = "factorial",
+    backend = backend or "anthropic",
+    player_index = player.index,
+    player_name = player.name,
+    sent_at_tick = game.tick,
+    snapshot = snapshot,
+    local_report = report
+  }
+
+  -- Include LM Studio URL when using that backend
+  if backend == "lmstudio" then
+    payload.lmstudio_url = setting_value("factorial-lmstudio-url") or "http://192.168.1.53:1234"
+  end
+
+  return payload
+end
+
+--- Send a snapshot to the bridge with the specified backend.
+--- Returns ok, message.
+local function send_to_bridge(player, snapshot, report, backend)
   if not is_bridge_enabled() then
     local receive_port = setting_value("factorial-udp-receive-port") or 34199
     local bridge_port = setting_value("factorial-udp-port") or 34198
@@ -144,16 +167,7 @@ function external.send_snapshot(player, snapshot, report)
 
   external.export_snapshot(player, snapshot, report)
 
-  local payload = {
-    kind = "factorial-advisor-request",
-    source = "factorial",
-    player_index = player.index,
-    player_name = player.name,
-    sent_at_tick = game.tick,
-    snapshot = snapshot,
-    local_report = report
-  }
-
+  local payload = build_payload(player, snapshot, report, backend)
   local json_payload = helpers.table_to_json(payload)
   local ok, err = send_chunked_udp(port, json_payload, player.index)
   if not ok then
@@ -162,6 +176,14 @@ function external.send_snapshot(player, snapshot, report)
   end
 
   return true
+end
+
+function external.send_snapshot(player, snapshot, report)
+  return send_to_bridge(player, snapshot, report, "anthropic")
+end
+
+function external.send_snapshot_local_llm(player, snapshot, report)
+  return send_to_bridge(player, snapshot, report, "lmstudio")
 end
 
 function external.poll_udp()

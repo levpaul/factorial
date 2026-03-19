@@ -7,6 +7,12 @@ Usage:
     python -m bridge --model claude-sonnet-4-20250514  # pick a specific model
     python -m bridge --no-log                   # disable request/response logging
     python -m bridge --log-dir /path/to/logs    # custom log directory
+    python -m bridge --lmstudio-model my-model  # override LM Studio model name
+
+The bridge routes requests to the correct backend based on the "backend" field
+in the incoming JSON payload:
+  - "anthropic" (default) -> Anthropic Claude API
+  - "lmstudio"            -> Local LM Studio (OpenAI-compatible) API
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from bridge.client import DEFAULT_MODEL, ask_claude
+from bridge.client import DEFAULT_LMSTUDIO_URL, DEFAULT_MODEL, ask_claude, ask_lmstudio
 from bridge.response import make_error_response, parse_response
 
 # Maximum UDP datagram we'll accept (64 KiB).
@@ -132,9 +138,16 @@ def handle_request(
     model: str,
     prompt_mode: str,
     log_dir: Path | None,
+    lmstudio_model: str,
 ) -> dict[str, Any]:
-    """Process a single advisor request and return a response dict."""
+    """Process a single advisor request and return a response dict.
+
+    Routes to the correct backend based on the ``backend`` field in the payload:
+      - ``"anthropic"`` (default) -> Anthropic Claude API
+      - ``"lmstudio"`` -> Local LM Studio (OpenAI-compatible) API
+    """
     log_prefix = _generate_log_prefix() if log_dir else None
+    backend = payload.get("backend", "anthropic")
 
     # Save incoming request
     if log_dir and log_prefix:
@@ -149,16 +162,33 @@ def handle_request(
             _save_log(log_dir, log_prefix, "response", response)
         return response
 
+    print(f"  Backend: {backend}")
+
     start = time.monotonic()
     try:
-        raw_text = ask_claude(
-            snapshot,
-            local_report,
-            model=model,
-            prompt_mode=prompt_mode,
-        )
+        if backend == "lmstudio":
+            lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
+            print(f"  LM Studio URL: {lmstudio_url}")
+            if lmstudio_model:
+                print(f"  LM Studio model: {lmstudio_model}")
+            raw_text = ask_lmstudio(
+                snapshot,
+                local_report,
+                base_url=lmstudio_url,
+                model=lmstudio_model,
+                prompt_mode=prompt_mode,
+            )
+            source = "lmstudio"
+        else:
+            raw_text = ask_claude(
+                snapshot,
+                local_report,
+                model=model,
+                prompt_mode=prompt_mode,
+            )
+            source = "claude"
     except Exception as exc:
-        error_msg = f"Anthropic API call failed: {exc}"
+        error_msg = f"{backend} API call failed: {exc}"
         print(f"  ERROR: {error_msg}", file=sys.stderr)
         response = make_error_response(error_msg)
         if log_dir and log_prefix:
@@ -166,7 +196,8 @@ def handle_request(
                 **response,
                 "_meta": {
                     "error": True,
-                    "model": model,
+                    "backend": backend,
+                    "model": model if backend == "anthropic" else lmstudio_model,
                     "prompt_mode": prompt_mode,
                 }
             })
@@ -175,12 +206,16 @@ def handle_request(
     elapsed = time.monotonic() - start
     response = parse_response(raw_text)
 
+    # Override the source to reflect which backend was used
+    response["source"] = source
+
     # Save response with metadata
     if log_dir and log_prefix:
         _save_log(log_dir, log_prefix, "response", {
             **response,
             "_meta": {
-                "model": model,
+                "backend": backend,
+                "model": model if backend == "anthropic" else lmstudio_model,
                 "prompt_mode": prompt_mode,
                 "elapsed_seconds": round(elapsed, 2),
                 "raw_text_length": len(raw_text),
@@ -195,12 +230,14 @@ def serve(
     model: str,
     prompt_mode: str,
     log_dir: Path | None,
+    lmstudio_model: str,
 ) -> None:
     """Run the UDP server loop forever."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", port))
     print(f"Factorial AI Advisor bridge listening on udp://127.0.0.1:{port}")
-    print(f"  Model: {model}")
+    print(f"  Anthropic model: {model}")
+    print(f"  LM Studio model: {lmstudio_model or '(use loaded model)'}")
     print(f"  Prompt mode: {prompt_mode}")
     print(f"  Chunked message reassembly: enabled (timeout {CHUNK_REASSEMBLY_TIMEOUT}s)")
     if log_dir:
@@ -237,7 +274,8 @@ def serve(
             continue
 
         addr_str = f"{address[0]}:{address[1]}"
-        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] Complete request from {addr_str}")
+        backend = payload.get("backend", "anthropic")
+        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] Complete request from {addr_str} (backend={backend})")
 
         start = time.monotonic()
         response = handle_request(
@@ -245,6 +283,7 @@ def serve(
             model=model,
             prompt_mode=prompt_mode,
             log_dir=log_dir,
+            lmstudio_model=lmstudio_model,
         )
         elapsed = time.monotonic() - start
         print(f"  Responded in {elapsed:.1f}s")
@@ -254,7 +293,7 @@ def serve(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Factorial AI Advisor — Anthropic Claude UDP bridge.",
+        description="Factorial AI Advisor — UDP bridge supporting Anthropic Claude and local LM Studio backends.",
     )
     parser.add_argument(
         "--port",
@@ -267,6 +306,12 @@ def main() -> None:
         type=str,
         default=DEFAULT_MODEL,
         help=f"Anthropic model to use (default: {DEFAULT_MODEL}).",
+    )
+    parser.add_argument(
+        "--lmstudio-model",
+        type=str,
+        default="",
+        help="LM Studio model name to request. If empty, uses whichever model is loaded in LM Studio.",
     )
     parser.add_argument(
         "--prompt-mode",
@@ -296,6 +341,7 @@ def main() -> None:
             model=args.model,
             prompt_mode=args.prompt_mode,
             log_dir=log_dir,
+            lmstudio_model=args.lmstudio_model,
         )
     except KeyboardInterrupt:
         print("\nShutting down.")

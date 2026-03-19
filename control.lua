@@ -55,7 +55,17 @@ local function send_external_request(player)
   local report, snapshot = refresh_player(player)
   local ok, message = external.send_snapshot(player, snapshot, report)
   if ok then
-    player.print("[Factorial Advisor] Snapshot sent to the localhost UDP bridge.")
+    player.print("[Factorial Advisor] Snapshot sent to the localhost UDP bridge (Anthropic).")
+  else
+    player.print("[Factorial Advisor] " .. message)
+  end
+end
+
+local function send_local_llm_request(player)
+  local report, snapshot = refresh_player(player)
+  local ok, message = external.send_snapshot_local_llm(player, snapshot, report)
+  if ok then
+    player.print("[Factorial Advisor] Snapshot sent to the localhost UDP bridge (Local LLM).")
   else
     player.print("[Factorial Advisor] " .. message)
   end
@@ -125,7 +135,7 @@ commands.add_command("advisor-export", "Export the latest advisor snapshot to sc
   end
 end)
 
-commands.add_command("advisor-send", "Send the latest advisor snapshot to the localhost UDP bridge.", function(command)
+commands.add_command("advisor-send", "Send the latest advisor snapshot to the localhost UDP bridge (Anthropic).", function(command)
   if not command.player_index then
     return
   end
@@ -134,6 +144,18 @@ commands.add_command("advisor-send", "Send the latest advisor snapshot to the lo
   if player then
     advisor.ensure_player(player.index)
     send_external_request(player)
+  end
+end)
+
+commands.add_command("advisor-send-local", "Send the latest advisor snapshot to the localhost UDP bridge (Local LLM).", function(command)
+  if not command.player_index then
+    return
+  end
+
+  local player = game.get_player(command.player_index)
+  if player then
+    advisor.ensure_player(player.index)
+    send_local_llm_request(player)
   end
 end)
 
@@ -189,6 +211,11 @@ script.on_event(defines.events.on_gui_click, function(event)
 
   if element.name == gui.names.external_button then
     send_external_request(player)
+    return
+  end
+
+  if element.name == gui.names.local_llm_button then
+    send_local_llm_request(player)
     return
   end
 

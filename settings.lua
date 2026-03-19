@@ -25,17 +25,25 @@ data:extend({
     order = "c"
   },
   {
+    type = "string-setting",
+    name = "factorial-lmstudio-url",
+    setting_type = "runtime-global",
+    default_value = "http://192.168.1.53:1234",
+    allow_blank = false,
+    order = "d"
+  },
+  {
     type = "bool-setting",
     name = "factorial-auto-poll-udp",
     setting_type = "runtime-global",
     default_value = true,
-    order = "d"
+    order = "e"
   },
   {
     type = "bool-setting",
     name = "factorial-dev-mode",
     setting_type = "runtime-global",
     default_value = false,
-    order = "e"
+    order = "f"
   }
 })

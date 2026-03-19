@@ -11,6 +11,7 @@ gui.names = {
   refresh_button = "factorial_advisor_refresh_button",
   export_button = "factorial_advisor_export_button",
   external_button = "factorial_advisor_external_button",
+  local_llm_button = "factorial_advisor_local_llm_button",
   internal_button = "factorial_advisor_internal_button",
   clear_button = "factorial_advisor_clear_button",
   close_button = "factorial_advisor_close_button"
@@ -287,6 +288,11 @@ function gui.open(player)
     type = "button",
     name = gui.names.external_button,
     caption = "Ask External"
+  })
+  button_bar.add({
+    type = "button",
+    name = gui.names.local_llm_button,
+    caption = "Ask Local LLM"
   })
   button_bar.add({
     type = "button",
