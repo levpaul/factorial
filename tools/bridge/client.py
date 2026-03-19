@@ -44,21 +44,29 @@ def ask_claude(
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     prompt_mode: str = "curated",
+    system_prompt: str | None = None,
+    user_message: str | None = None,
 ) -> str:
     """Send the snapshot to Claude and return the raw text response.
+
+    If *system_prompt* and *user_message* are provided, they override the
+    defaults built from the snapshot/report. This is used for detail requests.
 
     Raises ``anthropic.APIError`` (or subclasses) on transient failures so the
     caller can decide how to handle them.
     """
     client = anthropic.Anthropic(api_key=get_api_key())
 
-    user_message = build_user_message(snapshot, local_report, mode=prompt_mode)
+    if user_message is None:
+        user_message = build_user_message(snapshot, local_report, mode=prompt_mode)
+    if system_prompt is None:
+        system_prompt = SYSTEM_PROMPT
 
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
         temperature=0.3,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
 
@@ -78,11 +86,16 @@ def ask_lmstudio(
     model: str = "",
     max_tokens: int = DEFAULT_MAX_TOKENS,
     prompt_mode: str = "curated",
+    system_prompt: str | None = None,
+    user_message: str | None = None,
 ) -> str:
     """Send the snapshot to a local LM Studio server and return the raw text response.
 
     Uses the OpenAI-compatible chat completions API that LM Studio exposes.
     If *model* is empty, LM Studio will use whichever model is currently loaded.
+
+    If *system_prompt* and *user_message* are provided, they override the
+    defaults built from the snapshot/report. This is used for detail requests.
 
     Raises ``openai.APIError`` (or subclasses) on transient failures so the
     caller can decide how to handle them.
@@ -97,12 +110,15 @@ def ask_lmstudio(
         api_key=LMSTUDIO_API_KEY,
     )
 
-    user_message = build_user_message(snapshot, local_report, mode=prompt_mode)
+    if user_message is None:
+        user_message = build_user_message(snapshot, local_report, mode=prompt_mode)
+    if system_prompt is None:
+        system_prompt = SYSTEM_PROMPT
 
     # Build kwargs — omit model if empty so LM Studio uses its loaded model
     kwargs: dict = {
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         "max_tokens": max_tokens,

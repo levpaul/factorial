@@ -140,6 +140,22 @@ numbers from the snapshot (e.g. "iron production is 45/min but consumption is
 referring to. Avoid generic advice that could apply to any factory.\
 """
 
+DETAIL_SYSTEM_PROMPT = """\
+You are an expert Factorio advisor. The player has received a set of
+recommendations about their factory and is now asking for more detail on one
+specific recommendation.
+
+Provide a thorough justification and explanation for the recommendation. Include:
+- Why this matters for their current factory state, referencing specific numbers
+  from the snapshot
+- The underlying Factorio mechanics or ratios that make this important
+- Concrete, actionable steps the player should take to address this
+- Any trade-offs or considerations to keep in mind
+
+Write 2-4 paragraphs of plain text. Be specific and reference actual data from
+the snapshot. Do not use JSON formatting — just write clear, helpful prose.\
+"""
+
 
 def _format_rate(rate: dict[str, float] | None) -> str:
     """Format a production/consumption rate pair."""
@@ -368,3 +384,32 @@ def build_user_message(
     if mode == "full":
         return format_full(snapshot, local_report)
     return format_curated(snapshot, local_report)
+
+
+def build_detail_user_message(
+    item_text: str,
+    section_title: str,
+    snapshot: dict[str, Any],
+    local_report: dict[str, Any],
+    mode: str = "curated",
+) -> str:
+    """Build the user message for a detail/elaboration request.
+
+    The player clicked "get more info" on a specific recommendation item and
+    wants a detailed justification with actionable steps.
+    """
+    if mode == "full":
+        snapshot_text = format_full(snapshot, local_report)
+    else:
+        snapshot_text = format_curated(snapshot, local_report)
+
+    return (
+        f"The player wants more detail on this specific recommendation:\n"
+        f"\n"
+        f"Section: {section_title}\n"
+        f"Recommendation: {item_text}\n"
+        f"\n"
+        f"Here is the current factory state for context:\n"
+        f"\n"
+        f"{snapshot_text}"
+    )

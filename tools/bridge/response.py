@@ -120,3 +120,40 @@ def make_error_response(error_message: str) -> dict[str, Any]:
             }
         ],
     }
+
+
+def parse_detail_response(
+    raw_text: str,
+    detail_key: str,
+    source: str,
+) -> dict[str, Any]:
+    """Build a detail response dict from the model's free-form text.
+
+    The mod expects:
+        {
+            "kind": "factorial-advisor-detail-response",
+            "source": "...",
+            "detail_key": "1_2",
+            "detail_text": "Detailed explanation..."
+        }
+    """
+    return {
+        "kind": "factorial-advisor-detail-response",
+        "source": source,
+        "detail_key": detail_key,
+        "detail_text": raw_text.strip()[:3000],
+    }
+
+
+def make_detail_error_response(
+    error_message: str,
+    detail_key: str,
+    source: str = "bridge",
+) -> dict[str, Any]:
+    """Build a detail response dict that communicates an error."""
+    return {
+        "kind": "factorial-advisor-detail-response",
+        "source": source,
+        "detail_key": detail_key,
+        "detail_text": f"Error: {error_message}",
+    }

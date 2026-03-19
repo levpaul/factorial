@@ -16,10 +16,26 @@ local function get_dev_mode()
   return settings.global["factorial-dev-mode"].value
 end
 
+local function render_gui(player)
+  local report = advisor.get_last_report(player.index)
+  if not report then
+    return
+  end
+  gui.render(
+    player,
+    report,
+    advisor.get_external_report(player.index),
+    get_show_internal(player.index),
+    get_dev_mode(),
+    advisor.get_detail_cache(player.index),
+    advisor.get_expanded_details(player.index)
+  )
+end
+
 local function refresh_player(player)
   local report, snapshot = advisor.build_report(player)
   advisor.store_player_state(player.index, report, snapshot)
-  gui.render(player, report, advisor.get_external_report(player.index), get_show_internal(player.index), get_dev_mode())
+  render_gui(player)
   gui.set_internal_button_state(player, get_show_internal(player.index))
   return report, snapshot
 end
@@ -69,6 +85,51 @@ local function send_local_llm_request(player)
   else
     player.print("[Factorial Advisor] " .. message)
   end
+end
+
+--- Handle a click on a detail ("get more info") button.
+--- Button names follow the pattern: factorial_advisor_detail_<section>_<item>
+local function handle_detail_click(player, element_name)
+  local si_str, ii_str = element_name:match("^" .. gui.names.detail_prefix .. "(%d+)_(%d+)$")
+  if not si_str or not ii_str then
+    return false
+  end
+
+  local detail_key = si_str .. "_" .. ii_str
+  local si = tonumber(si_str)
+  local ii = tonumber(ii_str)
+
+  -- Toggle the expanded state
+  local now_expanded = advisor.toggle_expanded(player.index, detail_key)
+
+  -- If expanding and no cached detail, send a request
+  if now_expanded and not advisor.get_detail(player.index, detail_key) then
+    local ext_report = advisor.get_external_report(player.index)
+    if ext_report and ext_report.sections and ext_report.sections[si] then
+      local section = ext_report.sections[si]
+      local items = section.items or {}
+      local item_text = items[ii]
+      if item_text then
+        local ok, message = external.send_detail_request(
+          player,
+          item_text,
+          section.title or "External Notes",
+          detail_key,
+          ext_report.source or "claude"
+        )
+        if ok then
+          player.print("[Factorial Advisor] Requesting details...")
+        else
+          player.print("[Factorial Advisor] " .. message)
+        end
+      end
+    end
+  end
+
+  -- Re-render the GUI to show/hide the detail
+  render_gui(player)
+  gui.set_internal_button_state(player, get_show_internal(player.index))
+  return true
 end
 
 local function on_init()
@@ -219,20 +280,24 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
+  -- Check for detail ("get more info") button clicks
+  if element.name:sub(1, #gui.names.detail_prefix) == gui.names.detail_prefix then
+    handle_detail_click(player, element.name)
+    return
+  end
+
   if element.name == gui.names.internal_button then
     local current = get_show_internal(player.index)
     set_show_internal(player.index, not current)
-    local report = advisor.get_last_report(player.index)
-    if report then
-      gui.render(player, report, advisor.get_external_report(player.index), not current, get_dev_mode())
-      gui.set_internal_button_state(player, not current)
-    end
+    render_gui(player)
+    gui.set_internal_button_state(player, not current)
     return
   end
 
   if element.name == gui.names.clear_button then
     advisor.store_player_state(player.index, nil, nil)
     advisor.set_external_report(player.index, nil)
+    advisor.clear_detail_cache(player.index)
     gui.clear(player)
     player.print("[Factorial Advisor] Cleared.")
     return
@@ -244,13 +309,11 @@ script.on_nth_tick(30, function()
 end)
 
 script.on_event(defines.events.on_udp_packet_received, function(event)
-  external.receive_response(event)
+  local response_type = external.receive_response(event)
   local player = game.get_player(event.player_index)
   if player and gui.is_open(player) then
-    local report = advisor.get_last_report(player.index)
-    if report then
-      gui.render(player, report, advisor.get_external_report(player.index), get_show_internal(player.index), get_dev_mode())
-    end
+    render_gui(player)
+    gui.set_internal_button_state(player, get_show_internal(player.index))
   end
 end)
 

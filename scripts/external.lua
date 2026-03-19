@@ -130,6 +130,17 @@ local function send_chunked_udp(port, json_payload, player_index)
   return true
 end
 
+--- Map external report source to backend name for requests.
+--- The external report stores "claude" or "lmstudio" as the source,
+--- but the bridge expects "anthropic" or "lmstudio" as backend.
+local function source_to_backend(source)
+  if source == "lmstudio" then
+    return "lmstudio"
+  end
+  -- "claude", "claude-bridge", "udp", or anything else -> anthropic
+  return "anthropic"
+end
+
 --- Build the common payload for external requests, with an optional backend override.
 local function build_payload(player, snapshot, report, backend)
   local payload = {
@@ -186,6 +197,56 @@ function external.send_snapshot_local_llm(player, snapshot, report)
   return send_to_bridge(player, snapshot, report, "lmstudio")
 end
 
+--- Send a detail request for a specific recommendation item.
+--- @param player LuaPlayer
+--- @param item_text string The recommendation text to get more detail on
+--- @param section_title string The section the item belongs to
+--- @param detail_key string Cache key e.g. "1_2"
+--- @param backend_source string The source from the external report ("claude" or "lmstudio")
+function external.send_detail_request(player, item_text, section_title, detail_key, backend_source)
+  if not is_bridge_enabled() then
+    local receive_port = setting_value("factorial-udp-receive-port") or 34199
+    local bridge_port = setting_value("factorial-udp-port") or 34198
+    return false, ("Enable the runtime setting 'factorial-enable-udp-bridge' and start Factorio with --enable-lua-udp=%d. The bridge must listen on %d."):format(receive_port, bridge_port)
+  end
+
+  local port = setting_value("factorial-udp-port")
+  if not port then
+    return false, "No UDP port is configured."
+  end
+
+  local snapshot = advisor.get_last_snapshot(player.index)
+  local report = advisor.get_last_report(player.index)
+  local backend = source_to_backend(backend_source)
+
+  local payload = {
+    kind = "factorial-advisor-detail-request",
+    source = "factorial",
+    backend = backend,
+    detail_key = detail_key,
+    item_text = item_text,
+    section_title = section_title,
+    player_index = player.index,
+    player_name = player.name,
+    sent_at_tick = game.tick,
+    snapshot = snapshot or {},
+    local_report = report or {}
+  }
+
+  if backend == "lmstudio" then
+    payload.lmstudio_url = setting_value("factorial-lmstudio-url") or "http://192.168.1.53:1234"
+  end
+
+  local json_payload = helpers.table_to_json(payload)
+  local ok, err = send_chunked_udp(port, json_payload, player.index)
+  if not ok then
+    local receive_port = setting_value("factorial-udp-receive-port") or 34199
+    return false, ("send_udp failed: %s. Make sure Factorio was started with --enable-lua-udp=%d."):format(tostring(err), receive_port)
+  end
+
+  return true
+end
+
 function external.poll_udp()
   if not is_bridge_enabled() then
     return
@@ -200,10 +261,12 @@ function external.poll_udp()
   end
 end
 
+--- Process an incoming UDP response.
+--- Returns "detail" if this was a detail response, "report" for a full report, or nil on error.
 function external.receive_response(event)
   local player_index = event.player_index
   if not player_index or player_index == 0 then
-    return
+    return nil
   end
 
   local payload = helpers.json_to_table(event.payload)
@@ -221,9 +284,20 @@ function external.receive_response(event)
         }
       }
     })
-    return
+    return "report"
   end
 
+  -- Check if this is a detail response (for "get more info" requests)
+  if payload.kind == "factorial-advisor-detail-response" then
+    local detail_key = payload.detail_key
+    local detail_text = payload.detail_text
+    if detail_key and detail_text then
+      advisor.set_detail(player_index, tostring(detail_key), tostring(detail_text))
+    end
+    return "detail"
+  end
+
+  -- Standard full report response
   advisor.set_external_report(player_index, {
     source = tostring(payload.source or "udp"),
     title = tostring(payload.title or "External Advisor"),
@@ -231,6 +305,7 @@ function external.receive_response(event)
     summary = tostring(payload.summary or "External response received."),
     sections = normalize_external_sections(payload)
   })
+  return "report"
 end
 
 return external

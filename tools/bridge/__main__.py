@@ -13,6 +13,9 @@ The bridge routes requests to the correct backend based on the "backend" field
 in the incoming JSON payload:
   - "anthropic" (default) -> Anthropic Claude API
   - "lmstudio"            -> Local LM Studio (OpenAI-compatible) API
+
+It also handles detail requests (kind="factorial-advisor-detail-request") which
+ask the LLM to elaborate on a specific recommendation item.
 """
 
 from __future__ import annotations
@@ -27,7 +30,13 @@ from pathlib import Path
 from typing import Any
 
 from bridge.client import DEFAULT_LMSTUDIO_URL, DEFAULT_MODEL, ask_claude, ask_lmstudio
-from bridge.response import make_error_response, parse_response
+from bridge.prompt import DETAIL_SYSTEM_PROMPT, build_detail_user_message
+from bridge.response import (
+    make_detail_error_response,
+    make_error_response,
+    parse_detail_response,
+    parse_response,
+)
 
 # Maximum UDP datagram we'll accept (64 KiB).
 MAX_DATAGRAM = 65535
@@ -132,6 +141,123 @@ def _save_log(
     return path
 
 
+def _call_backend(
+    backend: str,
+    snapshot: dict,
+    local_report: dict,
+    *,
+    model: str,
+    lmstudio_model: str,
+    lmstudio_url: str,
+    prompt_mode: str,
+    system_prompt: str | None = None,
+    user_message: str | None = None,
+) -> tuple[str, str]:
+    """Call the appropriate backend and return (raw_text, source).
+
+    If *system_prompt* and *user_message* are provided, they override the
+    defaults. This is used for detail requests.
+    """
+    if backend == "lmstudio":
+        raw_text = ask_lmstudio(
+            snapshot,
+            local_report,
+            base_url=lmstudio_url,
+            model=lmstudio_model,
+            prompt_mode=prompt_mode,
+            system_prompt=system_prompt,
+            user_message=user_message,
+        )
+        return raw_text, "lmstudio"
+    else:
+        raw_text = ask_claude(
+            snapshot,
+            local_report,
+            model=model,
+            prompt_mode=prompt_mode,
+            system_prompt=system_prompt,
+            user_message=user_message,
+        )
+        return raw_text, "claude"
+
+
+def handle_detail_request(
+    payload: dict[str, Any],
+    *,
+    model: str,
+    prompt_mode: str,
+    log_dir: Path | None,
+    lmstudio_model: str,
+) -> dict[str, Any]:
+    """Process a detail ("get more info") request and return a detail response dict."""
+    log_prefix = _generate_log_prefix() if log_dir else None
+    backend = payload.get("backend", "anthropic")
+    detail_key = payload.get("detail_key", "0_0")
+    item_text = payload.get("item_text", "")
+    section_title = payload.get("section_title", "")
+
+    if log_dir and log_prefix:
+        _save_log(log_dir, log_prefix, "detail_request", payload)
+
+    if not item_text:
+        response = make_detail_error_response("No item text provided.", detail_key)
+        if log_dir and log_prefix:
+            _save_log(log_dir, log_prefix, "detail_response", response)
+        return response
+
+    snapshot = payload.get("snapshot", {})
+    local_report = payload.get("local_report", {})
+    lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
+
+    # Build the detail-specific prompt
+    detail_user_message = build_detail_user_message(
+        item_text, section_title, snapshot, local_report, mode=prompt_mode,
+    )
+
+    print(f"  Backend: {backend}")
+    print(f"  Detail key: {detail_key}")
+    print(f"  Item: {item_text[:80]}{'...' if len(item_text) > 80 else ''}")
+
+    start = time.monotonic()
+    try:
+        raw_text, source = _call_backend(
+            backend,
+            snapshot,
+            local_report,
+            model=model,
+            lmstudio_model=lmstudio_model,
+            lmstudio_url=lmstudio_url,
+            prompt_mode=prompt_mode,
+            system_prompt=DETAIL_SYSTEM_PROMPT,
+            user_message=detail_user_message,
+        )
+    except Exception as exc:
+        error_msg = f"{backend} API call failed: {exc}"
+        print(f"  ERROR: {error_msg}", file=sys.stderr)
+        response = make_detail_error_response(error_msg, detail_key, backend)
+        if log_dir and log_prefix:
+            _save_log(log_dir, log_prefix, "detail_response", response)
+        return response
+
+    elapsed = time.monotonic() - start
+    source_name = "lmstudio" if backend == "lmstudio" else "claude"
+    response = parse_detail_response(raw_text, detail_key, source_name)
+
+    if log_dir and log_prefix:
+        _save_log(log_dir, log_prefix, "detail_response", {
+            **response,
+            "_meta": {
+                "backend": backend,
+                "model": model if backend == "anthropic" else lmstudio_model,
+                "prompt_mode": prompt_mode,
+                "elapsed_seconds": round(elapsed, 2),
+                "raw_text_length": len(raw_text),
+            }
+        })
+
+    return response
+
+
 def handle_request(
     payload: dict[str, Any],
     *,
@@ -142,10 +268,27 @@ def handle_request(
 ) -> dict[str, Any]:
     """Process a single advisor request and return a response dict.
 
-    Routes to the correct backend based on the ``backend`` field in the payload:
+    Routes based on the ``kind`` field:
+      - ``"factorial-advisor-detail-request"`` -> detail elaboration
+      - ``"factorial-advisor-request"`` (or missing) -> full analysis
+
+    And the ``backend`` field:
       - ``"anthropic"`` (default) -> Anthropic Claude API
       - ``"lmstudio"`` -> Local LM Studio (OpenAI-compatible) API
     """
+    kind = payload.get("kind", "factorial-advisor-request")
+
+    # Route detail requests to the dedicated handler
+    if kind == "factorial-advisor-detail-request":
+        return handle_detail_request(
+            payload,
+            model=model,
+            prompt_mode=prompt_mode,
+            log_dir=log_dir,
+            lmstudio_model=lmstudio_model,
+        )
+
+    # Standard full analysis request
     log_prefix = _generate_log_prefix() if log_dir else None
     backend = payload.get("backend", "anthropic")
 
@@ -162,31 +305,25 @@ def handle_request(
             _save_log(log_dir, log_prefix, "response", response)
         return response
 
+    lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
+
     print(f"  Backend: {backend}")
+    if backend == "lmstudio":
+        print(f"  LM Studio URL: {lmstudio_url}")
+        if lmstudio_model:
+            print(f"  LM Studio model: {lmstudio_model}")
 
     start = time.monotonic()
     try:
-        if backend == "lmstudio":
-            lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
-            print(f"  LM Studio URL: {lmstudio_url}")
-            if lmstudio_model:
-                print(f"  LM Studio model: {lmstudio_model}")
-            raw_text = ask_lmstudio(
-                snapshot,
-                local_report,
-                base_url=lmstudio_url,
-                model=lmstudio_model,
-                prompt_mode=prompt_mode,
-            )
-            source = "lmstudio"
-        else:
-            raw_text = ask_claude(
-                snapshot,
-                local_report,
-                model=model,
-                prompt_mode=prompt_mode,
-            )
-            source = "claude"
+        raw_text, source = _call_backend(
+            backend,
+            snapshot,
+            local_report,
+            model=model,
+            lmstudio_model=lmstudio_model,
+            lmstudio_url=lmstudio_url,
+            prompt_mode=prompt_mode,
+        )
     except Exception as exc:
         error_msg = f"{backend} API call failed: {exc}"
         print(f"  ERROR: {error_msg}", file=sys.stderr)
@@ -274,8 +411,9 @@ def serve(
             continue
 
         addr_str = f"{address[0]}:{address[1]}"
+        kind = payload.get("kind", "factorial-advisor-request")
         backend = payload.get("backend", "anthropic")
-        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] Complete request from {addr_str} (backend={backend})")
+        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] {kind} from {addr_str} (backend={backend})")
 
         start = time.monotonic()
         response = handle_request(

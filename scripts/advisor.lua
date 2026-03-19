@@ -114,6 +114,8 @@ local SURFACE_RESOURCES = {
 local function initialize_storage_table()
   storage.player_data = storage.player_data or {}
   storage.external_reports = storage.external_reports or {}
+  storage.detail_cache = storage.detail_cache or {}
+  storage.expanded_details = storage.expanded_details or {}
 end
 
 local function round(value)
@@ -881,6 +883,9 @@ end
 function advisor.set_external_report(player_index, report)
   initialize_storage_table()
   storage.external_reports[player_index] = report
+  -- Clear detail cache when a new external report replaces the old one
+  storage.detail_cache[player_index] = {}
+  storage.expanded_details[player_index] = {}
 end
 
 function advisor.get_external_report(player_index)
@@ -920,6 +925,61 @@ function advisor.build_report(player)
   }
 
   return report, snapshot
+end
+
+
+-- Detail cache: stores "get more info" responses keyed by "section_item" (e.g. "1_2")
+function advisor.get_detail_cache(player_index)
+  initialize_storage_table()
+  storage.detail_cache[player_index] = storage.detail_cache[player_index] or {}
+  return storage.detail_cache[player_index]
+end
+
+function advisor.set_detail(player_index, key, detail_text)
+  initialize_storage_table()
+  storage.detail_cache[player_index] = storage.detail_cache[player_index] or {}
+  storage.detail_cache[player_index][key] = detail_text
+end
+
+function advisor.get_detail(player_index, key)
+  initialize_storage_table()
+  if not storage.detail_cache[player_index] then
+    return nil
+  end
+  return storage.detail_cache[player_index][key]
+end
+
+function advisor.clear_detail_cache(player_index)
+  initialize_storage_table()
+  storage.detail_cache[player_index] = {}
+  storage.expanded_details[player_index] = {}
+end
+
+-- Expanded details: tracks which items are currently showing their detail expansion
+function advisor.get_expanded_details(player_index)
+  initialize_storage_table()
+  storage.expanded_details[player_index] = storage.expanded_details[player_index] or {}
+  return storage.expanded_details[player_index]
+end
+
+function advisor.toggle_expanded(player_index, key)
+  initialize_storage_table()
+  storage.expanded_details[player_index] = storage.expanded_details[player_index] or {}
+  if storage.expanded_details[player_index][key] then
+    storage.expanded_details[player_index][key] = nil
+    return false
+  else
+    storage.expanded_details[player_index][key] = true
+    return true
+  end
+end
+
+function advisor.is_expanded(player_index, key)
+  initialize_storage_table()
+  if not storage.expanded_details[player_index] then
+    return false
+  end
+  return storage.expanded_details[player_index][key] == true
 end
 
 return advisor

@@ -14,7 +14,8 @@ gui.names = {
   local_llm_button = "factorial_advisor_local_llm_button",
   internal_button = "factorial_advisor_internal_button",
   clear_button = "factorial_advisor_clear_button",
-  close_button = "factorial_advisor_close_button"
+  close_button = "factorial_advisor_close_button",
+  detail_prefix = "factorial_advisor_detail_"
 }
 
 local SECTION_ICONS = {
@@ -26,6 +27,7 @@ local SECTION_ICONS = {
 }
 
 local CONTENT_WIDTH = 540
+local DETAIL_INDENT = 24
 
 local function frame_for(player)
   return player.gui.screen[gui.names.frame]
@@ -133,6 +135,111 @@ local function add_section(parent, title, items)
     })
     label.style.single_line = false
     label.style.maximal_width = CONTENT_WIDTH
+  end
+end
+
+--- Render a section from the external report, with "get more info" buttons on each item.
+--- @param parent LuaGuiElement The parent container to add elements to
+--- @param title string Section title
+--- @param items string[] List of item text strings
+--- @param section_index number 1-based index of this section in external_report.sections
+--- @param detail_cache table|nil Cached detail responses keyed by "si_ii"
+--- @param expanded_details table|nil Set of expanded item keys ("si_ii" -> true)
+local function add_external_section(parent, title, items, section_index, detail_cache, expanded_details)
+  detail_cache = detail_cache or {}
+  expanded_details = expanded_details or {}
+
+  -- Section header flow with icon
+  local header_flow = parent.add({
+    type = "flow",
+    direction = "horizontal"
+  })
+  header_flow.style.vertical_align = "center"
+  header_flow.style.top_margin = 4
+
+  local icon = SECTION_ICONS[title]
+  if icon then
+    header_flow.add({
+      type = "sprite",
+      sprite = icon,
+      resize_to_sprite = false
+    }).style.size = {24, 24}
+  end
+
+  local title_label = header_flow.add({
+    type = "label",
+    caption = title,
+    style = "caption_label"
+  })
+  title_label.style.left_margin = icon and 4 or 0
+
+  -- Items with "get more info" buttons
+  for item_index, item in ipairs(items) do
+    local detail_key = tostring(section_index) .. "_" .. tostring(item_index)
+    local is_expanded = expanded_details[detail_key] == true
+    local cached_detail = detail_cache[detail_key]
+
+    -- Item row: horizontal flow with label + search button
+    local item_flow = parent.add({
+      type = "flow",
+      direction = "horizontal"
+    })
+    item_flow.style.vertical_align = "center"
+
+    local severity, body = parse_severity(item)
+    local caption = severity_richtext(severity, body)
+    local label = item_flow.add({
+      type = "label",
+      caption = "  - " .. caption
+    })
+    label.style.single_line = false
+    label.style.maximal_width = CONTENT_WIDTH - 28  -- leave room for button
+
+    -- "Get more info" / "Hide detail" button
+    local detail_button = item_flow.add({
+      type = "sprite-button",
+      name = gui.names.detail_prefix .. detail_key,
+      sprite = "utility/search_icon",
+      style = "mini_button",
+      tooltip = is_expanded and "Hide detail" or "Get more info"
+    })
+    detail_button.style.size = {20, 20}
+
+    -- If expanded, show the detail content below the item
+    if is_expanded then
+      local detail_flow = parent.add({
+        type = "flow",
+        direction = "vertical"
+      })
+      detail_flow.style.left_margin = DETAIL_INDENT
+      detail_flow.style.bottom_margin = 4
+
+      if cached_detail then
+        -- Show the cached detail text
+        local detail_frame = detail_flow.add({
+          type = "frame",
+          direction = "vertical",
+          style = "inside_shallow_frame_with_padding"
+        })
+        detail_frame.style.maximal_width = CONTENT_WIDTH - DETAIL_INDENT
+        detail_frame.style.horizontally_stretchable = true
+
+        local detail_label = detail_frame.add({
+          type = "label",
+          caption = cached_detail
+        })
+        detail_label.style.single_line = false
+        detail_label.style.maximal_width = CONTENT_WIDTH - DETAIL_INDENT - 16
+        detail_label.style.font_color = {0.9, 0.9, 0.85}
+      else
+        -- No cache yet: show loading placeholder
+        local loading_label = detail_flow.add({
+          type = "label",
+          caption = "[color=0.6,0.6,0.6]Requesting details...[/color]"
+        })
+        loading_label.style.single_line = false
+      end
+    end
   end
 end
 
@@ -342,7 +449,7 @@ function gui.clear(player)
   gui.set_clear_button_visible(player, false)
 end
 
-function gui.render(player, report, external_report, show_internal, dev_mode)
+function gui.render(player, report, external_report, show_internal, dev_mode, detail_cache, expanded_details)
   local frame = frame_for(player)
   if not frame or not frame.valid then
     return
@@ -357,6 +464,9 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
   if not body then
     return
   end
+
+  detail_cache = detail_cache or {}
+  expanded_details = expanded_details or {}
 
   -- Show/hide Clear button based on whether there's content
   gui.set_clear_button_visible(player, gui.has_content(report, external_report))
@@ -442,7 +552,7 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
       end
     end
 
-    -- External report
+    -- External report (with "get more info" buttons)
     if external_report and external_report.sections then
       body.add({
         type = "line",
@@ -457,9 +567,16 @@ function gui.render(player, report, external_report, show_internal, dev_mode)
       label.style.single_line = false
       label.style.maximal_width = CONTENT_WIDTH
 
-      for _, section in ipairs(external_report.sections) do
+      for section_index, section in ipairs(external_report.sections) do
         local items = section.items or { section.text or "No details provided." }
-        add_section(body, section.title or "External Notes", items)
+        add_external_section(
+          body,
+          section.title or "External Notes",
+          items,
+          section_index,
+          detail_cache,
+          expanded_details
+        )
       end
     end
   end
