@@ -4,7 +4,7 @@ data:extend({
     name = "factorial-default-advisor",
     setting_type = "runtime-per-user",
     default_value = "internal",
-    allowed_values = {"internal", "external", "local-llm"},
+    allowed_values = {"internal", "external", "local-llm", "opencodego-glm5", "opencodego-kimi"},
     order = "a"
   },
   {

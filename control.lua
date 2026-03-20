@@ -117,6 +117,20 @@ local function send_local_llm_request(player, scope)
   end
 end
 
+local function send_opencodego_request(player, scope, model_name)
+  scope = scope or get_scope(player.index)
+  start_loading_animation(player.index)
+  gui.show_loading(player, loading_dots_counters[player.index] or 1)
+  local report, snapshot = refresh_player(player, scope)
+  local ok, message = external.send_snapshot_opencodego(player, snapshot, report, scope, model_name)
+  if ok then
+    player.print("[Factorial Advisor] Snapshot sent to OpenCode Go (" .. model_name .. ").")
+  else
+    stop_loading_animation(player.index)
+    player.print("[Factorial Advisor] " .. message)
+  end
+end
+
 --- Handle a click on a detail ("get more info") button.
 --- Button names follow the pattern: factorial_advisor_detail_<section>_<item>
 local function handle_detail_click(player, element_name)
@@ -355,6 +369,10 @@ script.on_event(defines.events.on_gui_click, function(event)
       send_external_request(player, scope)
     elseif advisor_type == "local-llm" then
       send_local_llm_request(player, scope)
+    elseif advisor_type == "opencodego-glm5" then
+      send_opencodego_request(player, scope, "glm-5")
+    elseif advisor_type == "opencodego-kimi" then
+      send_opencodego_request(player, scope, "kimi-k2.5")
     end
     return
   end

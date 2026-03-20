@@ -54,13 +54,17 @@ end
 local ADVISOR_OPTIONS = {
   ["internal"] = 1,
   ["external"] = 2,
-  ["local-llm"] = 3
+  ["local-llm"] = 3,
+  ["opencodego-glm5"] = 4,
+  ["opencodego-kimi"] = 5
 }
 
 local ADVISOR_VALUES = {
   [1] = "internal",
   [2] = "external",
-  [3] = "local-llm"
+  [3] = "local-llm",
+  [4] = "opencodego-glm5",
+  [5] = "opencodego-kimi"
 }
 
 local SCOPE_OPTIONS = {
@@ -511,7 +515,7 @@ function gui.open(player, dev_mode)
   dropdown_bar.add({
     type = "drop-down",
     name = gui.names.advisor_dropdown,
-    items = {"Internal", "External (Anthropic)", "Local LLM"},
+    items = {"Internal", "External (Anthropic)", "Local LLM", "OpenCode Go (GLM-5)", "OpenCode Go (Kimi K2.5)"},
     selected_index = 1
   })
 

@@ -1,8 +1,9 @@
 """API client wrappers for the Factorial AI Advisor bridge.
 
-Supports two backends:
+Supports three backends:
   - Anthropic (Claude) via the anthropic Python package
   - LM Studio (or any OpenAI-compatible server) via the openai Python package
+  - OpenCode Go (GLM-5, Kimi K2.5) via the OpenAI-compatible API
 """
 
 from __future__ import annotations
@@ -19,8 +20,10 @@ DEFAULT_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_MAX_TOKENS = 2048
 
 DEFAULT_LMSTUDIO_URL = "http://192.168.1.53:1234"
-# LM Studio doesn't require a real API key, but the openai client needs one.
 LMSTUDIO_API_KEY = "lm-studio"
+
+DEFAULT_OPENCODEGO_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_OPENCODEGO_MODEL = "glm-5"
 
 
 def get_api_key() -> str:
@@ -134,6 +137,74 @@ def ask_lmstudio(
     response = client.chat.completions.create(**kwargs)
 
     # Extract the text from the first choice.
+    if response.choices:
+        message = response.choices[0].message
+        if message and message.content:
+            return message.content
+
+    return ""
+
+
+def get_opencodego_api_key() -> str:
+    """Read the OpenCode Go API key from the environment."""
+    key = os.environ.get("OPENCODEGO_API_KEY", "").strip()
+    if not key:
+        print(
+            "ERROR: OPENCODEGO_API_KEY environment variable is not set.\n"
+            "Export it before running the bridge:\n"
+            "  export OPENCODEGO_API_KEY='your-api-key'\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return key
+
+
+def ask_opencodego(
+    snapshot: dict,
+    local_report: dict,
+    *,
+    base_url: str = DEFAULT_OPENCODEGO_URL,
+    model: str = DEFAULT_OPENCODEGO_MODEL,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    prompt_mode: str = "curated",
+    system_prompt: str | None = None,
+    user_message: str | None = None,
+) -> str:
+    """Send the snapshot to OpenCode Go and return the raw text response.
+
+    Uses the OpenAI-compatible chat completions API.
+    If *system_prompt* and *user_message* are provided, they override the
+    defaults built from the snapshot/report. This is used for detail requests.
+
+    Raises ``openai.APIError`` (or subclasses) on transient failures so the
+    caller can decide how to handle them.
+    """
+    api_base = base_url.rstrip("/")
+    if not api_base.endswith("/v1"):
+        api_base += "/v1"
+
+    client = openai.OpenAI(
+        base_url=api_base,
+        api_key=get_opencodego_api_key(),
+    )
+
+    if user_message is None:
+        user_message = build_user_message(snapshot, local_report, mode=prompt_mode)
+    if system_prompt is None:
+        system_prompt = SYSTEM_PROMPT
+
+    kwargs: dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+    }
+
+    response = client.chat.completions.create(**kwargs)
+
     if response.choices:
         message = response.choices[0].message
         if message and message.content:

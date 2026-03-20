@@ -29,7 +29,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from bridge.client import DEFAULT_LMSTUDIO_URL, DEFAULT_MODEL, ask_claude, ask_lmstudio
+from bridge.client import (
+    DEFAULT_LMSTUDIO_URL,
+    DEFAULT_MODEL,
+    DEFAULT_OPENCODEGO_URL,
+    ask_claude,
+    ask_lmstudio,
+    ask_opencodego,
+)
 from bridge.prompt import DETAIL_SYSTEM_PROMPT, build_detail_user_message
 from bridge.response import (
     make_detail_error_response,
@@ -64,7 +71,9 @@ class ChunkAssembler:
         self._pending: dict[str, dict[str, Any]] = {}
         # { msg_id: { "parts": {part_num: data_str}, "total": int, "first_seen": float, "address": tuple } }
 
-    def receive(self, raw_json: dict[str, Any], address: tuple) -> dict[str, Any] | None:
+    def receive(
+        self, raw_json: dict[str, Any], address: tuple
+    ) -> dict[str, Any] | None:
         """Process a received JSON object.
 
         Returns the fully reassembled payload dict if the message is
@@ -90,7 +99,9 @@ class ChunkAssembler:
         self._pending[msg_id]["parts"][part] = data
 
         received = len(self._pending[msg_id]["parts"])
-        print(f"  Chunk {part}/{total} for message {msg_id} ({received}/{total} received)")
+        print(
+            f"  Chunk {part}/{total} for message {msg_id} ({received}/{total} received)"
+        )
 
         if received >= total:
             # All chunks received — reassemble.
@@ -100,7 +111,10 @@ class ChunkAssembler:
             try:
                 return json.loads(full_json_str)
             except json.JSONDecodeError as exc:
-                print(f"  ERROR: Failed to parse reassembled message: {exc}", file=sys.stderr)
+                print(
+                    f"  ERROR: Failed to parse reassembled message: {exc}",
+                    file=sys.stderr,
+                )
                 return None
 
         return None
@@ -150,6 +164,8 @@ def _call_backend(
     lmstudio_model: str,
     lmstudio_url: str,
     prompt_mode: str,
+    opencodego_url: str = DEFAULT_OPENCODEGO_URL,
+    opencodego_model: str = "glm-5",
     system_prompt: str | None = None,
     user_message: str | None = None,
 ) -> tuple[str, str]:
@@ -169,6 +185,17 @@ def _call_backend(
             user_message=user_message,
         )
         return raw_text, "lmstudio"
+    elif backend == "opencodego":
+        raw_text = ask_opencodego(
+            snapshot,
+            local_report,
+            base_url=opencodego_url,
+            model=opencodego_model,
+            prompt_mode=prompt_mode,
+            system_prompt=system_prompt,
+            user_message=user_message,
+        )
+        return raw_text, "opencodego"
     else:
         raw_text = ask_claude(
             snapshot,
@@ -188,6 +215,7 @@ def handle_detail_request(
     prompt_mode: str,
     log_dir: Path | None,
     lmstudio_model: str,
+    opencodego_model: str = "glm-5",
 ) -> dict[str, Any]:
     """Process a detail ("get more info") request and return a detail response dict."""
     log_prefix = _generate_log_prefix() if log_dir else None
@@ -208,10 +236,16 @@ def handle_detail_request(
     snapshot = payload.get("snapshot", {})
     local_report = payload.get("local_report", {})
     lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
+    opencodego_url = payload.get("opencodego_url", DEFAULT_OPENCODEGO_URL)
+    opencodego_model = payload.get("opencodego_model", opencodego_model)
 
     # Build the detail-specific prompt
     detail_user_message = build_detail_user_message(
-        item_text, section_title, snapshot, local_report, mode=prompt_mode,
+        item_text,
+        section_title,
+        snapshot,
+        local_report,
+        mode=prompt_mode,
     )
 
     print(f"  Backend: {backend}")
@@ -228,6 +262,8 @@ def handle_detail_request(
             lmstudio_model=lmstudio_model,
             lmstudio_url=lmstudio_url,
             prompt_mode=prompt_mode,
+            opencodego_url=opencodego_url,
+            opencodego_model=opencodego_model,
             system_prompt=DETAIL_SYSTEM_PROMPT,
             user_message=detail_user_message,
         )
@@ -240,20 +276,25 @@ def handle_detail_request(
         return response
 
     elapsed = time.monotonic() - start
-    source_name = "lmstudio" if backend == "lmstudio" else "claude"
+    source_name = backend  # "lmstudio", "opencodego", or "claude"
     response = parse_detail_response(raw_text, detail_key, source_name)
 
     if log_dir and log_prefix:
-        _save_log(log_dir, log_prefix, "detail_response", {
-            **response,
-            "_meta": {
-                "backend": backend,
-                "model": model if backend == "anthropic" else lmstudio_model,
-                "prompt_mode": prompt_mode,
-                "elapsed_seconds": round(elapsed, 2),
-                "raw_text_length": len(raw_text),
-            }
-        })
+        _save_log(
+            log_dir,
+            log_prefix,
+            "detail_response",
+            {
+                **response,
+                "_meta": {
+                    "backend": backend,
+                    "model": model if backend == "anthropic" else lmstudio_model,
+                    "prompt_mode": prompt_mode,
+                    "elapsed_seconds": round(elapsed, 2),
+                    "raw_text_length": len(raw_text),
+                },
+            },
+        )
 
     return response
 
@@ -265,6 +306,7 @@ def handle_request(
     prompt_mode: str,
     log_dir: Path | None,
     lmstudio_model: str,
+    opencodego_model: str = "glm-5",
 ) -> dict[str, Any]:
     """Process a single advisor request and return a response dict.
 
@@ -275,6 +317,7 @@ def handle_request(
     And the ``backend`` field:
       - ``"anthropic"`` (default) -> Anthropic Claude API
       - ``"lmstudio"`` -> Local LM Studio (OpenAI-compatible) API
+      - ``"opencodego"`` -> OpenCode Go (GLM-5, Kimi K2.5)
     """
     kind = payload.get("kind", "factorial-advisor-request")
 
@@ -286,6 +329,7 @@ def handle_request(
             prompt_mode=prompt_mode,
             log_dir=log_dir,
             lmstudio_model=lmstudio_model,
+            opencodego_model=opencodego_model,
         )
 
     # Standard full analysis request
@@ -306,12 +350,17 @@ def handle_request(
         return response
 
     lmstudio_url = payload.get("lmstudio_url", DEFAULT_LMSTUDIO_URL)
+    opencodego_url = payload.get("opencodego_url", DEFAULT_OPENCODEGO_URL)
+    opencodego_model = payload.get("opencodego_model", opencodego_model)
 
     print(f"  Backend: {backend}")
     if backend == "lmstudio":
         print(f"  LM Studio URL: {lmstudio_url}")
         if lmstudio_model:
             print(f"  LM Studio model: {lmstudio_model}")
+    elif backend == "opencodego":
+        print(f"  OpenCode Go URL: {opencodego_url}")
+        print(f"  OpenCode Go model: {opencodego_model}")
 
     start = time.monotonic()
     try:
@@ -323,21 +372,28 @@ def handle_request(
             lmstudio_model=lmstudio_model,
             lmstudio_url=lmstudio_url,
             prompt_mode=prompt_mode,
+            opencodego_url=opencodego_url,
+            opencodego_model=opencodego_model,
         )
     except Exception as exc:
         error_msg = f"{backend} API call failed: {exc}"
         print(f"  ERROR: {error_msg}", file=sys.stderr)
         response = make_error_response(error_msg)
         if log_dir and log_prefix:
-            _save_log(log_dir, log_prefix, "response", {
-                **response,
-                "_meta": {
-                    "error": True,
-                    "backend": backend,
-                    "model": model if backend == "anthropic" else lmstudio_model,
-                    "prompt_mode": prompt_mode,
-                }
-            })
+            _save_log(
+                log_dir,
+                log_prefix,
+                "response",
+                {
+                    **response,
+                    "_meta": {
+                        "error": True,
+                        "backend": backend,
+                        "model": model if backend == "anthropic" else lmstudio_model,
+                        "prompt_mode": prompt_mode,
+                    },
+                },
+            )
         return response
 
     elapsed = time.monotonic() - start
@@ -348,16 +404,21 @@ def handle_request(
 
     # Save response with metadata
     if log_dir and log_prefix:
-        _save_log(log_dir, log_prefix, "response", {
-            **response,
-            "_meta": {
-                "backend": backend,
-                "model": model if backend == "anthropic" else lmstudio_model,
-                "prompt_mode": prompt_mode,
-                "elapsed_seconds": round(elapsed, 2),
-                "raw_text_length": len(raw_text),
-            }
-        })
+        _save_log(
+            log_dir,
+            log_prefix,
+            "response",
+            {
+                **response,
+                "_meta": {
+                    "backend": backend,
+                    "model": model if backend == "anthropic" else lmstudio_model,
+                    "prompt_mode": prompt_mode,
+                    "elapsed_seconds": round(elapsed, 2),
+                    "raw_text_length": len(raw_text),
+                },
+            },
+        )
 
     return response
 
@@ -368,6 +429,7 @@ def serve(
     prompt_mode: str,
     log_dir: Path | None,
     lmstudio_model: str,
+    opencodego_model: str,
 ) -> None:
     """Run the UDP server loop forever."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -375,8 +437,11 @@ def serve(
     print(f"Factorial AI Advisor bridge listening on udp://127.0.0.1:{port}")
     print(f"  Anthropic model: {model}")
     print(f"  LM Studio model: {lmstudio_model or '(use loaded model)'}")
+    print(f"  OpenCode Go model: {opencodego_model}")
     print(f"  Prompt mode: {prompt_mode}")
-    print(f"  Chunked message reassembly: enabled (timeout {CHUNK_REASSEMBLY_TIMEOUT}s)")
+    print(
+        f"  Chunked message reassembly: enabled (timeout {CHUNK_REASSEMBLY_TIMEOUT}s)"
+    )
     if log_dir:
         print(f"  Logging to: {log_dir.resolve()}")
     else:
@@ -413,7 +478,9 @@ def serve(
         addr_str = f"{address[0]}:{address[1]}"
         kind = payload.get("kind", "factorial-advisor-request")
         backend = payload.get("backend", "anthropic")
-        print(f"[{datetime.now(tz=timezone.utc).isoformat()}] {kind} from {addr_str} (backend={backend})")
+        print(
+            f"[{datetime.now(tz=timezone.utc).isoformat()}] {kind} from {addr_str} (backend={backend})"
+        )
 
         start = time.monotonic()
         response = handle_request(
@@ -422,6 +489,7 @@ def serve(
             prompt_mode=prompt_mode,
             log_dir=log_dir,
             lmstudio_model=lmstudio_model,
+            opencodego_model=opencodego_model,
         )
         elapsed = time.monotonic() - start
         print(f"  Responded in {elapsed:.1f}s")
@@ -431,7 +499,7 @@ def serve(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Factorial AI Advisor — UDP bridge supporting Anthropic Claude and local LM Studio backends.",
+        description="Factorial AI Advisor — UDP bridge supporting Anthropic Claude, LM Studio, and OpenCode Go backends.",
     )
     parser.add_argument(
         "--port",
@@ -450,6 +518,12 @@ def main() -> None:
         type=str,
         default="",
         help="LM Studio model name to request. If empty, uses whichever model is loaded in LM Studio.",
+    )
+    parser.add_argument(
+        "--opencodego-model",
+        type=str,
+        default="glm-5",
+        help="OpenCode Go model to use (default: glm-5). Options: glm-5, kimi-k2.5.",
     )
     parser.add_argument(
         "--prompt-mode",
@@ -480,6 +554,7 @@ def main() -> None:
             prompt_mode=args.prompt_mode,
             log_dir=log_dir,
             lmstudio_model=args.lmstudio_model,
+            opencodego_model=args.opencodego_model,
         )
     except KeyboardInterrupt:
         print("\nShutting down.")

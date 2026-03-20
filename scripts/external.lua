@@ -133,18 +133,30 @@ local function send_chunked_udp(port, json_payload, player_index)
 end
 
 --- Map external report source to backend name for requests.
---- The external report stores "claude" or "lmstudio" as the source,
---- but the bridge expects "anthropic" or "lmstudio" as backend.
+--- The external report stores "claude", "lmstudio", or "opencodego" as the source.
 local function source_to_backend(source)
   if source == "lmstudio" then
     return "lmstudio"
+  elseif source == "opencodego" then
+    return "opencodego"
   end
   -- "claude", "claude-bridge", "udp", or anything else -> anthropic
   return "anthropic"
 end
 
+--- Extract the OpenCode Go model name from an advisor type string.
+--- e.g., "opencodego-glm5" -> "glm-5", "opencodego-kimi" -> "kimi-k2.5"
+local function opencodego_model_from_advisor_type(advisor_type)
+  if advisor_type == "opencodego-glm5" then
+    return "glm-5"
+  elseif advisor_type == "opencodego-kimi" then
+    return "kimi-k2.5"
+  end
+  return nil
+end
+
 --- Build the common payload for external requests, with an optional backend override.
-local function build_payload(player, snapshot, report, backend, scope)
+local function build_payload(player, snapshot, report, backend, scope, opencodego_model)
   scope = scope or "global"
   local payload = {
     kind = "factorial-advisor-request",
@@ -163,12 +175,17 @@ local function build_payload(player, snapshot, report, backend, scope)
     payload.lmstudio_url = setting_value("factorial-lmstudio-url") or "http://192.168.1.53:1234"
   end
 
+  -- Include OpenCode Go model when using that backend
+  if backend == "opencodego" and opencodego_model then
+    payload.opencodego_model = opencodego_model
+  end
+
   return payload
 end
 
 --- Send a snapshot to the bridge with the specified backend.
 --- Returns ok, message.
-local function send_to_bridge(player, snapshot, report, backend, scope)
+local function send_to_bridge(player, snapshot, report, backend, scope, opencodego_model)
   if not is_bridge_enabled() then
     local receive_port = setting_value("factorial-udp-receive-port") or 34199
     local bridge_port = setting_value("factorial-udp-port") or 34198
@@ -182,7 +199,7 @@ local function send_to_bridge(player, snapshot, report, backend, scope)
 
   external.export_snapshot(player, snapshot, report, scope)
 
-  local payload = build_payload(player, snapshot, report, backend, scope)
+  local payload = build_payload(player, snapshot, report, backend, scope, opencodego_model)
   local json_payload = helpers.table_to_json(payload)
   local ok, err = send_chunked_udp(port, json_payload, player.index)
   if not ok then
@@ -199,6 +216,10 @@ end
 
 function external.send_snapshot_local_llm(player, snapshot, report, scope)
   return send_to_bridge(player, snapshot, report, "lmstudio", scope)
+end
+
+function external.send_snapshot_opencodego(player, snapshot, report, scope, model)
+  return send_to_bridge(player, snapshot, report, "opencodego", scope, model)
 end
 
 --- Send a detail request for a specific recommendation item.
