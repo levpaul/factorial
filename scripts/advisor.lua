@@ -479,37 +479,44 @@ local function aggregate_resources(surfaces_data)
   return agg_resources
 end
 
-local function collect_snapshot(player)
+local function collect_snapshot(player, scope)
   local force = player.force
   local current_surface = player.surface
+  scope = scope or "global"
   local technologies = {}
   local entities = {}
 
-  -- Collect technologies (force-wide)
   for _, technology in ipairs(TRACKED_TECHS) do
     technologies[technology] = tech_researched(force, technology)
   end
 
-  -- Collect entity counts (force-wide)
   for _, entity in ipairs(TRACKED_ENTITIES) do
     entities[entity] = safe_entity_count(force, entity)
   end
 
-  -- Collect per-surface data for all surfaces with infrastructure
   local surfaces_data = {}
   local surface_names = {}
 
-  for _, surface in pairs(game.surfaces) do
-    if surface.valid and surface_has_entities(force, surface) then
-      surfaces_data[surface.name] = collect_surface_data(force, surface)
-      table.insert(surface_names, surface.name)
+  if scope == "current_planet" then
+    if current_surface.valid and surface_has_entities(force, current_surface) then
+      surfaces_data[current_surface.name] = collect_surface_data(force, current_surface)
+      table.insert(surface_names, current_surface.name)
+    else
+      surfaces_data[current_surface.name] = collect_surface_data(force, current_surface)
+      table.insert(surface_names, current_surface.name)
     end
-  end
+  else
+    for _, surface in pairs(game.surfaces) do
+      if surface.valid and surface_has_entities(force, surface) then
+        surfaces_data[surface.name] = collect_surface_data(force, surface)
+        table.insert(surface_names, surface.name)
+      end
+    end
 
-  -- If no surfaces have entities, at least include the current surface
-  if next(surfaces_data) == nil then
-    surfaces_data[current_surface.name] = collect_surface_data(force, current_surface)
-    table.insert(surface_names, current_surface.name)
+    if next(surfaces_data) == nil then
+      surfaces_data[current_surface.name] = collect_surface_data(force, current_surface)
+      table.insert(surface_names, current_surface.name)
+    end
   end
 
   -- Aggregate rates and resources across all surfaces (for backward compat with rule engine)
@@ -861,7 +868,45 @@ end
 
 function advisor.ensure_player(player_index)
   initialize_storage_table()
-  storage.player_data[player_index] = storage.player_data[player_index] or {}
+  if not storage.player_data[player_index] then
+    storage.player_data[player_index] = {}
+  end
+  if storage.player_data[player_index].advisor_type == nil then
+    storage.player_data[player_index].advisor_type = "internal"
+  end
+  if storage.player_data[player_index].feedback_scope == nil then
+    storage.player_data[player_index].feedback_scope = "global"
+  end
+end
+
+function advisor.get_advisor_type(player_index)
+  advisor.ensure_player(player_index)
+  return storage.player_data[player_index].advisor_type
+end
+
+function advisor.set_advisor_type(player_index, advisor_type)
+  advisor.ensure_player(player_index)
+  storage.player_data[player_index].advisor_type = advisor_type
+end
+
+function advisor.get_feedback_scope(player_index)
+  advisor.ensure_player(player_index)
+  return storage.player_data[player_index].feedback_scope
+end
+
+function advisor.set_feedback_scope(player_index, scope)
+  advisor.ensure_player(player_index)
+  storage.player_data[player_index].feedback_scope = scope
+end
+
+function advisor.get_loading_state(player_index)
+  advisor.ensure_player(player_index)
+  return storage.player_data[player_index].loading_state
+end
+
+function advisor.set_loading_state(player_index, state)
+  advisor.ensure_player(player_index)
+  storage.player_data[player_index].loading_state = state
 end
 
 function advisor.store_player_state(player_index, report, snapshot)
@@ -893,8 +938,8 @@ function advisor.get_external_report(player_index)
   return storage.external_reports[player_index]
 end
 
-function advisor.build_report(player)
-  local snapshot = collect_snapshot(player)
+function advisor.build_report(player, scope)
+  local snapshot = collect_snapshot(player, scope)
   local sections = {
     analyze_next_focus(snapshot),
     analyze_bottleneck(snapshot),

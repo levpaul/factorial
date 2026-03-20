@@ -1,10 +1,18 @@
 data:extend({
   {
+    type = "string-setting",
+    name = "factorial-default-advisor",
+    setting_type = "runtime",
+    default_value = "internal",
+    allowed_values = {"internal", "external", "local-llm"},
+    order = "a"
+  },
+  {
     type = "bool-setting",
     name = "factorial-enable-udp-bridge",
     setting_type = "runtime-global",
     default_value = false,
-    order = "a"
+    order = "b"
   },
   {
     type = "int-setting",

@@ -2,6 +2,9 @@ local advisor = require("scripts.advisor")
 local external = require("scripts.external")
 local gui = require("scripts.gui")
 
+local LOADING_TICK_INTERVAL = 20
+local loading_dots_counters = {}
+
 local function get_show_internal(player_index)
   advisor.ensure_player(player_index)
   return storage.player_data[player_index].show_internal == true
@@ -14,6 +17,11 @@ end
 
 local function get_dev_mode()
   return settings.global["factorial-dev-mode"].value
+end
+
+local function get_scope(player_index)
+  advisor.ensure_player(player_index)
+  return advisor.get_feedback_scope(player_index)
 end
 
 local function render_gui(player)
@@ -32,8 +40,9 @@ local function render_gui(player)
   )
 end
 
-local function refresh_player(player)
-  local report, snapshot = advisor.build_report(player)
+local function refresh_player(player, scope)
+  scope = scope or get_scope(player.index)
+  local report, snapshot = advisor.build_report(player, scope)
   advisor.store_player_state(player.index, report, snapshot)
   render_gui(player)
   gui.set_internal_button_state(player, get_show_internal(player.index))
@@ -55,34 +64,55 @@ local function toggle_for_player(player)
   end
 
   gui.open(player)
+  gui.set_advisor_dropdown_index(player, gui.advisor_index_from_type(advisor.get_advisor_type(player.index)))
+  gui.set_scope_dropdown_index(player, gui.index_from_scope(advisor.get_feedback_scope(player.index)))
   refresh_player(player)
 end
 
 local function export_for_player(player)
-  local report, snapshot = refresh_player(player)
-  local paths = external.export_snapshot(player, snapshot, report)
+  local scope = get_scope(player.index)
+  local report, snapshot = refresh_player(player, scope)
+  local paths = external.export_snapshot(player, snapshot, report, scope)
   player.print(
     ("[Factorial Advisor] Wrote snapshot to script-output/%s and report to script-output/%s.")
       :format(paths.snapshot, paths.report)
   )
 end
 
-local function send_external_request(player)
-  local report, snapshot = refresh_player(player)
-  local ok, message = external.send_snapshot(player, snapshot, report)
+local function start_loading_animation(player_index)
+  loading_dots_counters[player_index] = 1
+  advisor.set_loading_state(player_index, true)
+end
+
+local function stop_loading_animation(player_index)
+  loading_dots_counters[player_index] = nil
+  advisor.set_loading_state(player_index, false)
+end
+
+local function send_external_request(player, scope)
+  scope = scope or get_scope(player.index)
+  start_loading_animation(player.index)
+  gui.show_loading(player, loading_dots_counters[player.index] or 1)
+  local report, snapshot = refresh_player(player, scope)
+  local ok, message = external.send_snapshot(player, snapshot, report, scope)
   if ok then
     player.print("[Factorial Advisor] Snapshot sent to the localhost UDP bridge (Anthropic).")
   else
+    stop_loading_animation(player.index)
     player.print("[Factorial Advisor] " .. message)
   end
 end
 
-local function send_local_llm_request(player)
-  local report, snapshot = refresh_player(player)
-  local ok, message = external.send_snapshot_local_llm(player, snapshot, report)
+local function send_local_llm_request(player, scope)
+  scope = scope or get_scope(player.index)
+  start_loading_animation(player.index)
+  gui.show_loading(player, loading_dots_counters[player.index] or 1)
+  local report, snapshot = refresh_player(player, scope)
+  local ok, message = external.send_snapshot_local_llm(player, snapshot, report, scope)
   if ok then
     player.print("[Factorial Advisor] Snapshot sent to the localhost UDP bridge (Local LLM).")
   else
+    stop_loading_animation(player.index)
     player.print("[Factorial Advisor] " .. message)
   end
 end
@@ -134,6 +164,12 @@ end
 
 local function on_init()
   advisor.initialize_storage()
+  for _, player in pairs(game.players) do
+    advisor.ensure_player(player.index)
+  end
+end
+
+local function on_load()
   for _, player in pairs(game.players) do
     advisor.ensure_player(player.index)
   end
@@ -204,7 +240,7 @@ commands.add_command("advisor-send", "Send the latest advisor snapshot to the lo
   local player = game.get_player(command.player_index)
   if player then
     advisor.ensure_player(player.index)
-    send_external_request(player)
+    send_external_request(player, get_scope(player.index))
   end
 end)
 
@@ -216,13 +252,26 @@ commands.add_command("advisor-send-local", "Send the latest advisor snapshot to 
   local player = game.get_player(command.player_index)
   if player then
     advisor.ensure_player(player.index)
-    send_local_llm_request(player)
+    send_local_llm_request(player, get_scope(player.index))
   end
 end)
 
 script.on_init(on_init)
+script.on_load(on_load)
 script.on_configuration_changed(on_configuration_changed)
 script.on_event(defines.events.on_player_created, on_player_created)
+
+script.on_nth_tick(20, function()
+  external.poll_udp()
+
+  for player_index, _ in pairs(loading_dots_counters) do
+    local player = game.get_player(player_index)
+    if player and gui.is_open(player) and advisor.get_loading_state(player_index) then
+      loading_dots_counters[player_index] = (loading_dots_counters[player_index] % #gui.LOADING_STATES) + 1
+      gui.show_loading(player, loading_dots_counters[player_index])
+    end
+  end
+end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
   local player = game.get_player(event.player_index)
@@ -243,6 +292,33 @@ script.on_event("factorial-toggle-advisor", function(event)
   end
 end)
 
+script.on_event(defines.events.on_gui_selection_state_changed, function(event)
+  local element = event.element
+  if not element or not element.valid then
+    return
+  end
+
+  local player = game.get_player(event.player_index)
+  if not player then
+    return
+  end
+
+  if element.name == gui.names.advisor_dropdown then
+    local advisor_type = gui.advisor_type_from_index(element.selected_index)
+    advisor.set_advisor_type(player.index, advisor_type)
+
+    if advisor_type == "internal" then
+      local scope = get_scope(player.index)
+      refresh_player(player, scope)
+    end
+  end
+
+  if element.name == gui.names.scope_dropdown then
+    local scope = gui.scope_from_index(element.selected_index)
+    advisor.set_feedback_scope(player.index, scope)
+  end
+end)
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element or not element.valid then
@@ -260,7 +336,8 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 
   if element.name == gui.names.refresh_button then
-    refresh_player(player)
+    local scope = get_scope(player.index)
+    refresh_player(player, scope)
     player.print("[Factorial Advisor] Analysis refreshed.")
     return
   end
@@ -270,17 +347,21 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  if element.name == gui.names.external_button then
-    send_external_request(player)
+  if element.name == gui.names.ask_button then
+    local scope = get_scope(player.index)
+    local advisor_type = advisor.get_advisor_type(player.index)
+
+    if advisor_type == "internal" then
+      refresh_player(player, scope)
+      player.print("[Factorial Advisor] Internal analysis refreshed.")
+    elseif advisor_type == "external" then
+      send_external_request(player, scope)
+    elseif advisor_type == "local-llm" then
+      send_local_llm_request(player, scope)
+    end
     return
   end
 
-  if element.name == gui.names.local_llm_button then
-    send_local_llm_request(player)
-    return
-  end
-
-  -- Check for detail ("get more info") button clicks
   if element.name:sub(1, #gui.names.detail_prefix) == gui.names.detail_prefix then
     handle_detail_click(player, element.name)
     return
@@ -304,16 +385,15 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 end)
 
-script.on_nth_tick(30, function()
-  external.poll_udp()
-end)
-
 script.on_event(defines.events.on_udp_packet_received, function(event)
   local response_type = external.receive_response(event)
   local player = game.get_player(event.player_index)
-  if player and gui.is_open(player) then
-    render_gui(player)
-    gui.set_internal_button_state(player, get_show_internal(player.index))
+  if player then
+    stop_loading_animation(player.index)
+    if gui.is_open(player) then
+      render_gui(player)
+      gui.set_internal_button_state(player, get_show_internal(player.index))
+    end
   end
 end)
 

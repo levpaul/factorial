@@ -58,9 +58,11 @@ local function normalize_external_sections(payload)
   }
 end
 
-function external.export_snapshot(player, snapshot, report)
+function external.export_snapshot(player, snapshot, report, scope)
+  scope = scope or "global"
   local payload = {
     kind = "factorial-advisor-request",
+    scope = scope,
     snapshot = snapshot,
     local_report = report
   }
@@ -142,11 +144,13 @@ local function source_to_backend(source)
 end
 
 --- Build the common payload for external requests, with an optional backend override.
-local function build_payload(player, snapshot, report, backend)
+local function build_payload(player, snapshot, report, backend, scope)
+  scope = scope or "global"
   local payload = {
     kind = "factorial-advisor-request",
     source = "factorial",
     backend = backend or "anthropic",
+    scope = scope,
     player_index = player.index,
     player_name = player.name,
     sent_at_tick = game.tick,
@@ -164,7 +168,7 @@ end
 
 --- Send a snapshot to the bridge with the specified backend.
 --- Returns ok, message.
-local function send_to_bridge(player, snapshot, report, backend)
+local function send_to_bridge(player, snapshot, report, backend, scope)
   if not is_bridge_enabled() then
     local receive_port = setting_value("factorial-udp-receive-port") or 34199
     local bridge_port = setting_value("factorial-udp-port") or 34198
@@ -176,9 +180,9 @@ local function send_to_bridge(player, snapshot, report, backend)
     return false, "No UDP port is configured."
   end
 
-  external.export_snapshot(player, snapshot, report)
+  external.export_snapshot(player, snapshot, report, scope)
 
-  local payload = build_payload(player, snapshot, report, backend)
+  local payload = build_payload(player, snapshot, report, backend, scope)
   local json_payload = helpers.table_to_json(payload)
   local ok, err = send_chunked_udp(port, json_payload, player.index)
   if not ok then
@@ -189,12 +193,12 @@ local function send_to_bridge(player, snapshot, report, backend)
   return true
 end
 
-function external.send_snapshot(player, snapshot, report)
-  return send_to_bridge(player, snapshot, report, "anthropic")
+function external.send_snapshot(player, snapshot, report, scope)
+  return send_to_bridge(player, snapshot, report, "anthropic", scope)
 end
 
-function external.send_snapshot_local_llm(player, snapshot, report)
-  return send_to_bridge(player, snapshot, report, "lmstudio")
+function external.send_snapshot_local_llm(player, snapshot, report, scope)
+  return send_to_bridge(player, snapshot, report, "lmstudio", scope)
 end
 
 --- Send a detail request for a specific recommendation item.

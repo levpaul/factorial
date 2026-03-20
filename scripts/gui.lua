@@ -10,12 +10,14 @@ gui.names = {
   button_bar = "factorial_advisor_button_bar",
   refresh_button = "factorial_advisor_refresh_button",
   export_button = "factorial_advisor_export_button",
-  external_button = "factorial_advisor_external_button",
-  local_llm_button = "factorial_advisor_local_llm_button",
-  internal_button = "factorial_advisor_internal_button",
   clear_button = "factorial_advisor_clear_button",
   close_button = "factorial_advisor_close_button",
-  detail_prefix = "factorial_advisor_detail_"
+  detail_prefix = "factorial_advisor_detail_",
+  advisor_dropdown = "factorial_advisor_dropdown",
+  scope_dropdown = "factorial_advisor_scope_dropdown",
+  loading_label = "factorial_advisor_loading",
+  ask_button = "factorial_advisor_ask_button",
+  internal_button = "factorial_advisor_internal_button"
 }
 
 local SECTION_ICONS = {
@@ -46,6 +48,30 @@ local function parse_severity(text)
   end
   return nil, text
 end
+
+local ADVISOR_OPTIONS = {
+  ["internal"] = 1,
+  ["external"] = 2,
+  ["local-llm"] = 3
+}
+
+local ADVISOR_VALUES = {
+  [1] = "internal",
+  [2] = "external",
+  [3] = "local-llm"
+}
+
+local SCOPE_OPTIONS = {
+  ["global"] = 1,
+  ["current_planet"] = 2
+}
+
+local SCOPE_VALUES = {
+  [1] = "global",
+  [2] = "current_planet"
+}
+
+gui.LOADING_STATES = {"Loading.", "Loading..", "Loading...", "Loading...."}
 
 local function severity_richtext(severity, text)
   if severity == "High" then
@@ -278,6 +304,121 @@ function gui.set_clear_button_visible(player, visible)
   end
 end
 
+function gui.get_advisor_dropdown_index(player)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return 1
+  end
+  local content = frame[gui.names.content]
+  if not content then
+    return 1
+  end
+  local dropdown = content[gui.names.advisor_dropdown]
+  if dropdown and dropdown.valid then
+    return dropdown.selected_index
+  end
+  return 1
+end
+
+function gui.set_advisor_dropdown_index(player, index)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return
+  end
+  local content = frame[gui.names.content]
+  if not content then
+    return
+  end
+  local dropdown = content[gui.names.advisor_dropdown]
+  if dropdown and dropdown.valid then
+    dropdown.selected_index = index
+  end
+end
+
+function gui.get_scope_dropdown_index(player)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return 1
+  end
+  local content = frame[gui.names.content]
+  if not content then
+    return 1
+  end
+  local dropdown = content[gui.names.scope_dropdown]
+  if dropdown and dropdown.valid then
+    return dropdown.selected_index
+  end
+  return 1
+end
+
+function gui.set_scope_dropdown_index(player, index)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return
+  end
+  local content = frame[gui.names.content]
+  if not content then
+    return
+  end
+  local dropdown = content[gui.names.scope_dropdown]
+  if dropdown and dropdown.valid then
+    dropdown.selected_index = index
+  end
+end
+
+function gui.advisor_type_from_index(index)
+  return ADVISOR_VALUES[index] or "internal"
+end
+
+function gui.advisor_index_from_type(advisor_type)
+  return ADVISOR_OPTIONS[advisor_type] or 1
+end
+
+function gui.scope_from_index(index)
+  return SCOPE_VALUES[index] or "global"
+end
+
+function gui.index_from_scope(scope)
+  return SCOPE_OPTIONS[scope] or 1
+end
+
+function gui.show_loading(player, dots_index)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return
+  end
+  local body = frame[gui.names.content] and frame[gui.names.content][gui.names.body]
+  if not body then
+    return
+  end
+
+  destroy_children(body)
+
+  local idx = ((dots_index - 1) % #gui.LOADING_STATES) + 1
+  local loading_label = body.add({
+    type = "label",
+    name = gui.names.loading_label,
+    caption = gui.LOADING_STATES[idx]
+  })
+  loading_label.style.font_color = {0.7, 0.7, 0.7}
+end
+
+function gui.hide_loading(player)
+  local frame = frame_for(player)
+  if not frame or not frame.valid then
+    return
+  end
+  local body = frame[gui.names.content] and frame[gui.names.content][gui.names.body]
+  if not body then
+    return
+  end
+
+  local loading_label = body[gui.names.loading_label]
+  if loading_label and loading_label.valid then
+    loading_label.destroy()
+  end
+end
+
 function gui.has_content(report, external_report)
   -- Check if there's any meaningful content to display
   if report and report.sections and #report.sections > 0 then
@@ -294,7 +435,6 @@ function gui.open(player)
     return false
   end
 
-  -- Outer frame with no caption (custom titlebar instead)
   local frame = player.gui.screen.add({
     type = "frame",
     name = gui.names.frame,
@@ -304,7 +444,6 @@ function gui.open(player)
   frame.style.minimal_width = 620
   frame.style.maximal_height = 720
 
-  -- Draggable titlebar
   local titlebar = frame.add({
     type = "flow",
     name = gui.names.titlebar,
@@ -322,7 +461,6 @@ function gui.open(player)
   })
   title_label.drag_target = frame
 
-  -- Filler to push close button to the right
   local filler = titlebar.add({
     type = "empty-widget",
     ignored_by_interaction = true
@@ -337,7 +475,6 @@ function gui.open(player)
     tooltip = "Close"
   })
 
-  -- Content frame
   local content = frame.add({
     type = "frame",
     name = gui.names.content,
@@ -345,7 +482,49 @@ function gui.open(player)
     style = "inside_shallow_frame_with_padding"
   })
 
-  -- Status bar
+  local dropdown_bar = content.add({
+    type = "flow",
+    direction = "horizontal"
+  })
+  dropdown_bar.style.vertical_align = "center"
+  dropdown_bar.style.bottom_margin = 4
+  dropdown_bar.style.horizontal_spacing = 12
+
+  dropdown_bar.add({
+    type = "label",
+    caption = "Advisor:"
+  })
+
+  dropdown_bar.add({
+    type = "drop-down",
+    name = gui.names.advisor_dropdown,
+    items = {"Internal", "External (Anthropic)", "Local LLM"},
+    selected_index = 1
+  })
+
+  dropdown_bar.add({
+    type = "label",
+    caption = "Scope:"
+  })
+
+  dropdown_bar.add({
+    type = "drop-down",
+    name = gui.names.scope_dropdown,
+    items = {"Global", "Current Planet"},
+    selected_index = 1
+  })
+
+  dropdown_bar.add({
+    type = "button",
+    name = gui.names.ask_button,
+    caption = "Ask"
+  })
+
+  content.add({
+    type = "line",
+    direction = "horizontal"
+  })
+
   local status_flow = content.add({
     type = "flow",
     name = gui.names.status_flow,
@@ -355,13 +534,11 @@ function gui.open(player)
   status_flow.style.bottom_margin = 4
   status_flow.style.horizontal_spacing = 12
 
-  -- Separator between status and body
   content.add({
     type = "line",
     direction = "horizontal"
   })
 
-  -- Scroll pane body
   local body = content.add({
     type = "scroll-pane",
     name = gui.names.body,
@@ -372,7 +549,6 @@ function gui.open(player)
   body.style.vertically_stretchable = true
   body.style.horizontally_stretchable = true
 
-  -- Button bar at the bottom
   local button_bar = frame.add({
     type = "flow",
     name = gui.names.button_bar,
@@ -393,16 +569,6 @@ function gui.open(player)
   })
   button_bar.add({
     type = "button",
-    name = gui.names.external_button,
-    caption = "Ask External"
-  })
-  button_bar.add({
-    type = "button",
-    name = gui.names.local_llm_button,
-    caption = "Ask Local LLM"
-  })
-  button_bar.add({
-    type = "button",
     name = gui.names.internal_button,
     caption = "Show Internal"
   })
@@ -411,7 +577,7 @@ function gui.open(player)
     name = gui.names.clear_button,
     caption = "Clear"
   })
-  clear_button.visible = false  -- Hidden by default, shown when there's content
+  clear_button.visible = false
 
   player.opened = frame
   return true
