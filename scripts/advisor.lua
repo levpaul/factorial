@@ -526,6 +526,11 @@ local function collect_snapshot(player, scope)
   -- Use current surface's environment for the top-level (backward compat)
   local current_surface_data = surfaces_data[current_surface.name] or collect_surface_data(force, current_surface)
 
+  local scope_description = "Resources, rates, and environment data are collected from: " .. table.concat(surface_names, ", ") .. "."
+  if scope == "current_planet" then
+    scope_description = scope_description .. " Entity counts and technology research state are FORCE-WIDE (all planets). Rockets launched is also force-wide."
+  end
+
   local snapshot = {
     meta = {
       advisor_version = "0.2.0",
@@ -535,8 +540,10 @@ local function collect_snapshot(player, scope)
       player_index = player.index,
       player_name = player.name,
       force = force.name,
+      scope = scope,
       surface_count = #surface_names,
-      surfaces_collected = surface_names
+      surfaces_collected = surface_names,
+      scope_description = scope_description
     },
     force = {
       rockets_launched = force.rockets_launched,
@@ -545,10 +552,8 @@ local function collect_snapshot(player, scope)
     technologies = technologies,
     entities = entities,
 
-    -- Per-surface breakdown (NEW)
     surfaces = surfaces_data,
 
-    -- Aggregated data (backward compatibility with rule engine)
     resources = agg_resources,
     environment = current_surface_data.environment,
     rates = {
