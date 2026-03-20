@@ -30,6 +30,7 @@ local SECTION_ICONS = {
 
 local CONTENT_WIDTH = 540
 local DETAIL_INDENT = 24
+local DEV_MULTIPLIER = 1.4
 
 local function frame_for(player)
   return player.gui.screen[gui.names.frame]
@@ -430,7 +431,7 @@ function gui.has_content(report, external_report)
   return false
 end
 
-function gui.open(player)
+function gui.open(player, dev_mode)
   if gui.is_open(player) then
     return false
   end
@@ -441,8 +442,10 @@ function gui.open(player)
     direction = "vertical"
   })
   frame.auto_center = true
-  frame.style.minimal_width = 620
-  frame.style.maximal_height = 720
+  local frame_min_width = dev_mode and math.floor(620 * DEV_MULTIPLIER) or 620
+  local frame_max_height = dev_mode and math.floor(720 * DEV_MULTIPLIER) or 720
+  frame.style.minimal_width = frame_min_width
+  frame.style.maximal_height = frame_max_height
 
   local titlebar = frame.add({
     type = "flow",
@@ -544,8 +547,10 @@ function gui.open(player)
     name = gui.names.body,
     direction = "vertical"
   })
-  body.style.minimal_height = 400
-  body.style.maximal_height = 580
+  local body_min_height = dev_mode and math.floor(400 * DEV_MULTIPLIER) or 400
+  local body_max_height = dev_mode and math.floor(580 * DEV_MULTIPLIER) or 580
+  body.style.minimal_height = body_min_height
+  body.style.maximal_height = body_max_height
   body.style.vertically_stretchable = true
   body.style.horizontally_stretchable = true
 
@@ -686,15 +691,16 @@ function gui.render(player, report, external_report, show_internal, dev_mode, de
   if dev_mode then
     local text = build_text_content(report, external_report, show_internal)
     if text and text ~= "" then
+      local dev_content_width = math.floor(CONTENT_WIDTH * DEV_MULTIPLIER)
       local text_box = body.add({
         type = "text-box",
         text = text
       })
       text_box.style.vertically_stretchable = true
       text_box.style.horizontally_stretchable = true
-      text_box.style.minimal_width = CONTENT_WIDTH
-      text_box.style.maximal_width = CONTENT_WIDTH
-      text_box.style.minimal_height = 400
+      text_box.style.minimal_width = dev_content_width
+      text_box.style.maximal_width = dev_content_width
+      text_box.style.minimal_height = math.floor(400 * DEV_MULTIPLIER)
       text_box.read_only = true
     end
   else

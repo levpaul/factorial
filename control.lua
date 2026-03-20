@@ -50,7 +50,7 @@ local function refresh_player(player, scope)
 end
 
 local function open_or_refresh(player)
-  if gui.open(player) then
+  if gui.open(player, get_dev_mode()) then
     refresh_player(player)
   elseif gui.is_open(player) then
     refresh_player(player)
@@ -63,7 +63,7 @@ local function toggle_for_player(player)
     return
   end
 
-  gui.open(player)
+  gui.open(player, get_dev_mode())
   gui.set_advisor_dropdown_index(player, gui.advisor_index_from_type(advisor.get_advisor_type(player.index)))
   gui.set_scope_dropdown_index(player, gui.index_from_scope(advisor.get_feedback_scope(player.index)))
   refresh_player(player)
