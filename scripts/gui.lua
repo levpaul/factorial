@@ -716,6 +716,7 @@ function gui.render(player, report, external_report, show_internal, dev_mode, de
       text_box.style.maximal_width = dev_content_width
       text_box.style.minimal_height = math.floor(400 * DEV_MULTIPLIER)
       text_box.read_only = true
+      text_box.word_wrap = true
     end
   else
     if show_internal then
