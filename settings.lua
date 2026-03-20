@@ -2,7 +2,7 @@ data:extend({
   {
     type = "string-setting",
     name = "factorial-default-advisor",
-    setting_type = "runtime",
+    setting_type = "runtime-per-user",
     default_value = "internal",
     allowed_values = {"internal", "external", "local-llm"},
     order = "a"
