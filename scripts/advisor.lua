@@ -155,6 +155,8 @@ local function tech_researched(force, name)
   return technology ~= nil and technology.valid and technology.researched
 end
 
+local TICKS_PER_MINUTE = 3600  -- 60 ticks/sec * 60 sec/min
+
 local function one_minute_flow(statistics, name, category)
   if not statistics or not statistics.valid then
     return 0
@@ -169,7 +171,7 @@ local function one_minute_flow(statistics, name, category)
   end)
 
   if ok and value then
-    return value
+    return value * TICKS_PER_MINUTE
   end
 
   return 0

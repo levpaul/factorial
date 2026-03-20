@@ -344,7 +344,8 @@ script.on_event(defines.events.on_gui_click, function(event)
 
   if element.name == gui.names.ask_button then
     local scope = get_scope(player.index)
-    local advisor_type = advisor.get_advisor_type(player.index)
+    local dropdown = element.parent[gui.names.advisor_dropdown]
+    local advisor_type = gui.advisor_type_from_index(dropdown and dropdown.selected_index or 1)
     player.print("[DEBUG] Ask clicked: advisor_type=" .. tostring(advisor_type))
 
     if advisor_type == "internal" then

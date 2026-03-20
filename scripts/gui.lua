@@ -13,6 +13,7 @@ gui.names = {
   clear_button = "factorial_advisor_clear_button",
   close_button = "factorial_advisor_close_button",
   detail_prefix = "factorial_advisor_detail_",
+  dropdown_bar = "factorial_advisor_dropdown_bar",
   advisor_dropdown = "factorial_advisor_dropdown",
   scope_dropdown = "factorial_advisor_scope_dropdown",
   loading_label = "factorial_advisor_loading",
@@ -314,7 +315,11 @@ function gui.get_advisor_dropdown_index(player)
   if not content then
     return 1
   end
-  local dropdown = content[gui.names.advisor_dropdown]
+  local dropdown_bar = content[gui.names.dropdown_bar]
+  if not dropdown_bar then
+    return 1
+  end
+  local dropdown = dropdown_bar[gui.names.advisor_dropdown]
   if dropdown and dropdown.valid then
     return dropdown.selected_index
   end
@@ -330,7 +335,11 @@ function gui.set_advisor_dropdown_index(player, index)
   if not content then
     return
   end
-  local dropdown = content[gui.names.advisor_dropdown]
+  local dropdown_bar = content[gui.names.dropdown_bar]
+  if not dropdown_bar then
+    return
+  end
+  local dropdown = dropdown_bar[gui.names.advisor_dropdown]
   if dropdown and dropdown.valid then
     dropdown.selected_index = index
   end
@@ -487,6 +496,7 @@ function gui.open(player, dev_mode)
 
   local dropdown_bar = content.add({
     type = "flow",
+    name = gui.names.dropdown_bar,
     direction = "horizontal"
   })
   dropdown_bar.style.vertical_align = "center"
