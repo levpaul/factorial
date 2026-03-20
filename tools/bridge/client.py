@@ -17,7 +17,7 @@ import openai
 from bridge.prompt import SYSTEM_PROMPT, build_user_message
 
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS = 8192
 
 DEFAULT_LMSTUDIO_URL = "http://192.168.1.53:1234"
 LMSTUDIO_API_KEY = "lm-studio"
