@@ -169,12 +169,6 @@ local function on_init()
   end
 end
 
-local function on_load()
-  for _, player in pairs(game.players) do
-    advisor.ensure_player(player.index)
-  end
-end
-
 local function on_configuration_changed()
   advisor.initialize_storage()
   for _, player in pairs(game.players) do
@@ -257,7 +251,6 @@ commands.add_command("advisor-send-local", "Send the latest advisor snapshot to 
 end)
 
 script.on_init(on_init)
-script.on_load(on_load)
 script.on_configuration_changed(on_configuration_changed)
 script.on_event(defines.events.on_player_created, on_player_created)
 
