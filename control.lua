@@ -298,7 +298,9 @@ script.on_event(defines.events.on_gui_selection_state_changed, function(event)
 
   if element.name == gui.names.advisor_dropdown then
     local advisor_type = gui.advisor_type_from_index(element.selected_index)
+    player.print("[DEBUG] Dropdown changed: index=" .. tostring(element.selected_index) .. " type=" .. tostring(advisor_type))
     advisor.set_advisor_type(player.index, advisor_type)
+    player.print("[DEBUG] Stored advisor_type=" .. tostring(advisor.get_advisor_type(player.index)))
 
     if advisor_type == "internal" then
       local scope = get_scope(player.index)
@@ -343,6 +345,7 @@ script.on_event(defines.events.on_gui_click, function(event)
   if element.name == gui.names.ask_button then
     local scope = get_scope(player.index)
     local advisor_type = advisor.get_advisor_type(player.index)
+    player.print("[DEBUG] Ask clicked: advisor_type=" .. tostring(advisor_type))
 
     if advisor_type == "internal" then
       refresh_player(player, scope)
